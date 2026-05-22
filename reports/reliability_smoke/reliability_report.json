@@ -1,0 +1,309 @@
+{
+  "args": {
+    "data_root": "/home/zfy/dataset/tcn/Parsed",
+    "output_dir": "reports/reliability_smoke",
+    "checkpoint": "",
+    "nature_baseline_checkpoint": "models/trained_tcn.tar",
+    "mode": "smoke",
+    "device": "cpu",
+    "side": "r",
+    "input_profile": "human",
+    "heldout_tasks": "jump,cutting,lift_weight,lunges",
+    "val_count": 2,
+    "test_count": 2,
+    "window_size": 128,
+    "stride": 128,
+    "min_valid_fraction": 0.2,
+    "max_windows_per_trial": 1,
+    "limit_trials": 8,
+    "epochs": 1,
+    "batch_size": 2,
+    "lr": 0.001,
+    "num_channels": "8,8",
+    "kernel_size": 4,
+    "dropout": 0.1,
+    "fault_loss_weight": 0.1,
+    "stats_batches": 2,
+    "max_eval_batches": 1,
+    "fault_scenarios": "clean",
+    "seed": 7
+  },
+  "input_names": [
+    "foot_imu_r_gyro_x",
+    "foot_imu_r_gyro_y",
+    "foot_imu_r_gyro_z",
+    "foot_imu_r_accel_x",
+    "foot_imu_r_accel_y",
+    "foot_imu_r_accel_z",
+    "shank_imu_r_gyro_x",
+    "shank_imu_r_gyro_y",
+    "shank_imu_r_gyro_z",
+    "shank_imu_r_accel_x",
+    "shank_imu_r_accel_y",
+    "shank_imu_r_accel_z",
+    "thigh_imu_r_gyro_x",
+    "thigh_imu_r_gyro_y",
+    "thigh_imu_r_gyro_z",
+    "thigh_imu_r_accel_x",
+    "thigh_imu_r_accel_y",
+    "thigh_imu_r_accel_z",
+    "insole_r_cop_x",
+    "insole_r_cop_z",
+    "insole_r_force_y",
+    "hip_angle_r",
+    "hip_angle_r_velocity_filt",
+    "knee_angle_r",
+    "knee_angle_r_velocity_filt"
+  ],
+  "label_names": [
+    "hip_flexion_r_moment",
+    "knee_angle_r_moment"
+  ],
+  "splits": {
+    "train": {
+      "num_trials": 8,
+      "num_participants": 1,
+      "participants": [
+        "BT01"
+      ],
+      "tasks": [
+        "ball_toss",
+        "curb_down"
+      ],
+      "assistance_counts": {
+        "on": 4,
+        "off": 4,
+        "unknown": 0
+      }
+    },
+    "val": {
+      "num_trials": 8,
+      "num_participants": 1,
+      "participants": [
+        "BT14"
+      ],
+      "tasks": [
+        "ball_toss",
+        "curb_down",
+        "curb_up",
+        "dynamic_walk"
+      ],
+      "assistance_counts": {
+        "on": 8,
+        "off": 0,
+        "unknown": 0
+      }
+    },
+    "test_id": {
+      "num_trials": 8,
+      "num_participants": 1,
+      "participants": [
+        "BT16"
+      ],
+      "tasks": [
+        "ball_toss",
+        "curb_down",
+        "curb_up",
+        "dynamic_walk"
+      ],
+      "assistance_counts": {
+        "on": 8,
+        "off": 0,
+        "unknown": 0
+      }
+    },
+    "test_ood": {
+      "num_trials": 8,
+      "num_participants": 1,
+      "participants": [
+        "BT16"
+      ],
+      "tasks": [
+        "cutting",
+        "jump"
+      ],
+      "assistance_counts": {
+        "on": 8,
+        "off": 0,
+        "unknown": 0
+      }
+    }
+  },
+  "history": [
+    {
+      "epoch": 1,
+      "train_loss": -0.8843282014131546,
+      "val_rmse": 0.22841624915599823,
+      "val_mae": 0.18668396770954132,
+      "val_r2": -0.4409213066101074,
+      "val_valid_fraction": 1.0,
+      "val_nll": -0.8111734986305237,
+      "val_uncertainty_error_corr": -0.35475456714630127,
+      "val_coverage_50": 0.69140625,
+      "val_coverage_68": 0.875,
+      "val_coverage_90": 1.0,
+      "val_coverage_95": 1.0,
+      "val_coverage_ece": 0.1341015625,
+      "val_fault_auroc": NaN,
+      "val_baseline_wrong_direction_ratio": 0.9525547623634338,
+      "val_baseline_peak_wrong_torque": 0.002166999038308859,
+      "val_baseline_retained_aligned_torque": 0.0021659296471625566,
+      "val_baseline_mean_abs_jerk": 0.001858917181380093,
+      "val_gated_wrong_direction_ratio": 0.9525547623634338,
+      "val_gated_peak_wrong_torque": 0.002166999038308859,
+      "val_gated_retained_aligned_torque": 0.0021659296471625566,
+      "val_gated_mean_abs_jerk": 0.001858917181380093,
+      "val_mean_gate": 1.0,
+      "val_mean_risk": 0.9991594552993774
+    }
+  ],
+  "results": {
+    "train/clean": {
+      "rmse": 0.08804735541343689,
+      "mae": 0.06768034398555756,
+      "r2": -0.22280895709991455,
+      "valid_fraction": 1.0,
+      "nll": -0.9775964021682739,
+      "uncertainty_error_corr": 0.9219717383384705,
+      "coverage_50": 1.0,
+      "coverage_68": 1.0,
+      "coverage_90": 1.0,
+      "coverage_95": 1.0,
+      "coverage_ece": 0.2425,
+      "fault_auroc": NaN,
+      "baseline_wrong_direction_ratio": 0.0,
+      "baseline_peak_wrong_torque": 0.0,
+      "baseline_retained_aligned_torque": 0.08046704530715942,
+      "baseline_mean_abs_jerk": 0.001142736873589456,
+      "gated_wrong_direction_ratio": 0.0,
+      "gated_peak_wrong_torque": 0.0,
+      "gated_retained_aligned_torque": 0.0804668664932251,
+      "gated_mean_abs_jerk": 0.001143515226431191,
+      "mean_gate": 0.9999988675117493,
+      "mean_risk": 0.9993048906326294
+    },
+    "val/clean": {
+      "rmse": 0.22841624915599823,
+      "mae": 0.18668396770954132,
+      "r2": -0.4409213066101074,
+      "valid_fraction": 1.0,
+      "nll": -0.8111734986305237,
+      "uncertainty_error_corr": -0.35475456714630127,
+      "coverage_50": 0.69140625,
+      "coverage_68": 0.875,
+      "coverage_90": 1.0,
+      "coverage_95": 1.0,
+      "coverage_ece": 0.1341015625,
+      "fault_auroc": NaN,
+      "baseline_wrong_direction_ratio": 0.9525547623634338,
+      "baseline_peak_wrong_torque": 0.002166999038308859,
+      "baseline_retained_aligned_torque": 0.0021659296471625566,
+      "baseline_mean_abs_jerk": 0.001858917181380093,
+      "gated_wrong_direction_ratio": 0.9525547623634338,
+      "gated_peak_wrong_torque": 0.002166999038308859,
+      "gated_retained_aligned_torque": 0.0021659296471625566,
+      "gated_mean_abs_jerk": 0.001858917181380093,
+      "mean_gate": 1.0,
+      "mean_risk": 0.9991594552993774
+    },
+    "test_id/clean": {
+      "rmse": 0.1462094634771347,
+      "mae": 0.11871391534805298,
+      "r2": -0.4717061519622803,
+      "valid_fraction": 1.0,
+      "nll": -0.9263859391212463,
+      "uncertainty_error_corr": -0.7619963884353638,
+      "coverage_50": 0.92578125,
+      "coverage_68": 0.994140625,
+      "coverage_90": 1.0,
+      "coverage_95": 1.0,
+      "coverage_ece": 0.22248046875,
+      "fault_auroc": NaN,
+      "baseline_wrong_direction_ratio": 1.0,
+      "baseline_peak_wrong_torque": 0.0013780739391222596,
+      "baseline_retained_aligned_torque": 0.0,
+      "baseline_mean_abs_jerk": 0.0009443952003493905,
+      "gated_wrong_direction_ratio": 1.0,
+      "gated_peak_wrong_torque": 0.0013780739391222596,
+      "gated_retained_aligned_torque": 0.0,
+      "gated_mean_abs_jerk": 0.0009443952003493905,
+      "mean_gate": 1.0,
+      "mean_risk": 0.9993423223495483
+    },
+    "test_ood/clean": {
+      "rmse": 0.8163856863975525,
+      "mae": 0.6365267634391785,
+      "r2": 0.002055048942565918,
+      "valid_fraction": 0.55859375,
+      "nll": 1.5235179662704468,
+      "uncertainty_error_corr": -0.3482733964920044,
+      "coverage_50": 0.279720276594162,
+      "coverage_68": 0.38111889362335205,
+      "coverage_90": 0.5839160680770874,
+      "coverage_95": 0.692307710647583,
+      "coverage_ece": 0.2732342627644539,
+      "fault_auroc": NaN,
+      "baseline_wrong_direction_ratio": 0.4977777898311615,
+      "baseline_peak_wrong_torque": 0.004324374720454216,
+      "baseline_retained_aligned_torque": 0.017077483236789703,
+      "baseline_mean_abs_jerk": 0.029777780175209045,
+      "gated_wrong_direction_ratio": 0.4977777898311615,
+      "gated_peak_wrong_torque": 0.004324374720454216,
+      "gated_retained_aligned_torque": 0.017077483236789703,
+      "gated_mean_abs_jerk": 0.029777780175209045,
+      "mean_gate": 1.0,
+      "mean_risk": 0.9940120577812195
+    },
+    "ood_detection/clean": {
+      "risk_auroc": 1.0
+    },
+    "nature_baseline/val/clean": {
+      "rmse": 0.18116813898086548,
+      "mae": 0.13915808498859406,
+      "r2": 0.34330564737319946,
+      "valid_fraction": 0.0078125,
+      "baseline_wrong_direction_ratio": 0.0,
+      "baseline_peak_wrong_torque": 0.0,
+      "baseline_retained_aligned_torque": 0.6525068283081055,
+      "baseline_mean_abs_jerk": 0.11862092465162277,
+      "gated_wrong_direction_ratio": 0.0,
+      "gated_peak_wrong_torque": 0.0,
+      "gated_retained_aligned_torque": 0.6525068283081055,
+      "gated_mean_abs_jerk": 0.11862092465162277,
+      "mean_gate": 1.0,
+      "mean_risk": 0.5
+    },
+    "nature_baseline/test_id/clean": {
+      "rmse": 0.12743908166885376,
+      "mae": 0.10003691911697388,
+      "r2": 0.39631617069244385,
+      "valid_fraction": 0.0078125,
+      "baseline_wrong_direction_ratio": 0.0,
+      "baseline_peak_wrong_torque": 0.0,
+      "baseline_retained_aligned_torque": 0.5283761620521545,
+      "baseline_mean_abs_jerk": 0.05208127945661545,
+      "gated_wrong_direction_ratio": 0.0,
+      "gated_peak_wrong_torque": 0.0,
+      "gated_retained_aligned_torque": 0.5283761620521545,
+      "gated_mean_abs_jerk": 0.05208127945661545,
+      "mean_gate": 1.0,
+      "mean_risk": 0.5
+    },
+    "nature_baseline/test_ood/clean": {
+      "rmse": 0.49132147431373596,
+      "mae": 0.3665592670440674,
+      "r2": 0.6920523643493652,
+      "valid_fraction": 0.0078125,
+      "baseline_wrong_direction_ratio": 0.3333333432674408,
+      "baseline_peak_wrong_torque": 0.08480721712112427,
+      "baseline_retained_aligned_torque": 0.538034200668335,
+      "baseline_mean_abs_jerk": 1.0362013578414917,
+      "gated_wrong_direction_ratio": 0.3333333432674408,
+      "gated_peak_wrong_torque": 0.08480721712112427,
+      "gated_retained_aligned_torque": 0.538034200668335,
+      "gated_mean_abs_jerk": 1.0362013578414917,
+      "mean_gate": 1.0,
+      "mean_risk": 0.5
+    }
+  }
+}
