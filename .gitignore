@@ -1,3 +1,23 @@
+# Python caches and local environments
 __pycache__/
-**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
 
+# Generated experiment outputs
+logs/
+reports/
+
+# Local full-text paper extracts; keep curated Markdown notes instead
+paper/*.txt
+*.md
+
+# Editor and OS metadata
+.DS_Store
+.idea/
+.vscode/

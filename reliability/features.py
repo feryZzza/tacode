@@ -71,3 +71,24 @@ def feature_groups(feature_names: List[str]) -> dict[str, List[int]]:
 		elif "hip_angle" in name or "knee_angle" in name:
 			groups["encoder"].append(idx)
 	return {name: indices for name, indices in groups.items() if indices}
+
+
+def joint_velocity_indices(feature_names: List[str], label_names_resolved: List[str]) -> List[int]:
+	"""为每个 moment 标签关节找到对应角速度通道的输入索引。
+
+	标签如 hip_flexion_r_moment / knee_angle_r_moment，速度通道为
+	hip_angle_r_velocity_filt / knee_angle_r_velocity_filt。返回与标签同序的索引，
+	缺失则填 -1（closed-loop 端按 -1 跳过功率项）。
+	"""
+	indices = []
+	for label in label_names_resolved:
+		joint = "hip" if label.startswith("hip") else "knee" if label.startswith("knee") else None
+		side = "_r" if (label.endswith("_r") or "_r_" in label) else "_l" if (label.endswith("_l") or "_l_" in label) else ""
+		found = -1
+		if joint is not None:
+			for idx, name in enumerate(feature_names):
+				if name.startswith(f"{joint}_angle{side}") and "velocity" in name:
+					found = idx
+					break
+		indices.append(found)
+	return indices
