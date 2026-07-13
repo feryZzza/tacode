@@ -15,7 +15,6 @@ reports/
 
 # Local full-text paper extracts; keep curated Markdown notes instead
 paper/*.txt
-*.md
 
 # Editor and OS metadata
 .DS_Store
