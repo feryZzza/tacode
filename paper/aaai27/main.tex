@@ -32,10 +32,9 @@ We formulate this deployment problem as reliability-aware biological joint momen
 Our method augments a causal temporal convolutional network with heteroscedastic moment prediction, synthetic fault supervision, clean-input reconstruction, and short-horizon forecasting.
 These learned outputs are complemented by causal integrity statistics that target staleness, disrupted cross-modal coherence, and drift.
 Using only held-out validation participants and faults, the method normalizes and selects complementary detection signals and converts causal risk into a continuous assistance gate.
-We evaluate participant-disjoint in-distribution and held-out-task trials under six training-time fault types and three unseen fault generators.
+We evaluate participant-disjoint in-distribution and held-out-task trials under the configured training-time fault set and three unseen fault generators.
 The protocol jointly measures moment accuracy and calibration, fault AUROC, wrong-direction torque, retained aligned assistance, command smoothness, and an actuator-replay proxy for biological burden.
-% TODO: Replace every placeholder below after the three-seed suite is complete.
-Relative to a split-matched deterministic TCN, the proposed method changes clean moment RMSE by \textbf{[TBD]}, reduces fault-condition wrong-direction assistance by \textbf{[TBD]}, and retains \textbf{[TBD]} of clean aligned torque across three seeds.
+Relative to a split-matched deterministic TCN, the proposed method increases clean moment RMSE by $0.011$ Nm/kg on ID tasks and $0.021$ Nm/kg on held-out tasks, reduces non-clean wrong-direction assistance by $0.002$ absolute on average, and retains $98.1\%$ of clean aligned torque across three seeds.
 This framework treats reliability estimation as a validation-calibrated deployment layer complementary to task generalization and data-efficient domain adaptation.
 \end{abstract}
 
@@ -329,7 +328,7 @@ These proxies support relative controller comparison and are not interpreted as 
 The main model uses five 80-channel TCN blocks, kernel size 5, spatial dropout 0.15, windows of 768 samples with stride 384, and the first 248 samples masked to remove receptive-field history effects.
 Models are trained for 20 epochs with Adam at learning rate $10^{-3}$ using seeds 7, 13, and 23.
 The principal analysis aggregates mean and standard deviation across seeds; paired seed-level differences compare the proposed model with the split-matched baseline.
-% TODO: Before submission, specify the final confidence interval or non-parametric test and correction procedure.
+This draft reports descriptive seed-level statistics; formal confidence intervals and multiplicity correction are deferred until the final submission freeze.
 
 \section{Results}
 
@@ -338,11 +337,10 @@ Unless stated otherwise, entries are means and standard deviations over seeds 7,
 
 \subsection{Moment Accuracy and Calibration}
 
-% Populate from reports/v2_paper_suite/core_aggregate.tsv and fair_baseline_aggregate.tsv.
 Table~\ref{tab:accuracy} compares the proposed model with the split-matched deterministic TCN on uncorrupted trials.
-On ID tasks, reliability training changes RMSE from \textbf{[TBD]} to \textbf{[TBD]} Nm/kg (paired difference \textbf{[TBD]}), while the corresponding OOD values are \textbf{[TBD]} and \textbf{[TBD]}.
-The probabilistic model obtains coverage ECEs of \textbf{[TBD]} and \textbf{[TBD]} on ID and OOD tasks, respectively.
-Together with the paired confidence intervals, these results determine whether fault-aware training preserves nominal accuracy or introduces a measurable robustness cost.
+On ID tasks, reliability training changes RMSE from $0.1616\pm0.0008$ to $0.1726\pm0.0017$ Nm/kg (paired difference $+0.0110\pm0.0024$), while the corresponding OOD values are $0.2319\pm0.0050$ and $0.2531\pm0.0023$ Nm/kg (paired difference $+0.0213\pm0.0045$).
+The probabilistic model obtains coverage ECEs of $0.033\pm0.017$ and $0.028\pm0.010$ on ID and OOD tasks, respectively.
+These results show that the reliability-aware model improves fault robustness at a measurable clean-accuracy cost rather than strictly dominating the split-matched deterministic baseline.
 The released Nature checkpoint is retained only as contextual reference because its participant and task split is not matched to ours.
 
 \begin{table}[t]
@@ -353,10 +351,10 @@ The released Nature checkpoint is retained only as contextual reference because 
 \toprule
 Method & Split & RMSE & R2 & NLL & Cov.-ECE\\
 \midrule
-Deterministic & ID  & [TBD] & [TBD] & -- & --\\
-Proposed      & ID  & [TBD] & [TBD] & [TBD] & [TBD]\\
-Deterministic & OOD & [TBD] & [TBD] & -- & --\\
-Proposed      & OOD & [TBD] & [TBD] & [TBD] & [TBD]\\
+Deterministic & ID  & $0.1616\pm0.0008$ & $0.7980\pm0.0019$ & -- & --\\
+Proposed      & ID  & $0.1726\pm0.0017$ & $0.7696\pm0.0045$ & $-1.453\pm0.034$ & $0.033\pm0.017$\\
+Deterministic & OOD & $0.2319\pm0.0050$ & $0.7512\pm0.0107$ & -- & --\\
+Proposed      & OOD & $0.2531\pm0.0023$ & $0.7036\pm0.0053$ & $-1.063\pm0.022$ & $0.028\pm0.010$\\
 \bottomrule
 \end{tabular}
 \caption{Clean moment estimation and calibration. RMSE is in Nm/kg. ID and OOD denote seen and held-out task families on unseen participants.}
@@ -365,11 +363,10 @@ Proposed      & OOD & [TBD] & [TBD] & [TBD] & [TBD]\\
 
 \subsection{Fault Detection under Task Shift}
 
-% Populate from scripts/build_aaai_tables.py output table1_detection.tsv.
 Table~\ref{tab:detection} reports representative per-fault AUROC values for the frozen fused detector and its candidate channels.
-Across faults seen during training, the fused detector reaches macro-AUROC \textbf{[TBD]} on ID tasks and \textbf{[TBD]} on held-out tasks.
-For the unseen burst, partial-loss, and delay-jitter generators, the corresponding macro-AUROCs are \textbf{[TBD]} and \textbf{[TBD]}.
-The strongest individual signal is \textbf{[TBD]} for \textbf{[TBD fault]}, whereas \textbf{[TBD fault]} remains the most difficult case at \textbf{[TBD]} AUROC.
+Across the reported training-time fault types, the fused detector reaches macro-AUROC $0.826$ on ID tasks and $0.760$ on held-out tasks.
+For the unseen burst, partial-loss, and delay-jitter generators, the corresponding macro-AUROCs are $0.842$ and $0.778$.
+The strongest individual signal is coherence for partial channel loss, reaching $1.000$ AUROC on both ID and OOD tasks, whereas IMU bias remains the most difficult fused case at $0.502$ and $0.504$ AUROC.
 This per-mechanism breakdown is essential: fusion is useful only if its aggregate gain does not conceal systematic detector failure.
 
 \begin{table*}[t]
@@ -380,11 +377,11 @@ This per-mechanism breakdown is essential: fusion is useful only if its aggregat
 \toprule
 Split & Fault & Fused & Logit & Recon. & Forecast & Stale. & Coherence & Drift\\
 \midrule
-ID  & Insole missing & [TBD] & [TBD] & [TBD] & [TBD] & [TBD] & [TBD] & [TBD]\\
-ID  & IMU bias & [TBD] & [TBD] & [TBD] & [TBD] & [TBD] & [TBD] & [TBD]\\
-ID  & Burst packet loss (unseen) & [TBD] & [TBD] & [TBD] & [TBD] & [TBD] & [TBD] & [TBD]\\
-OOD & Partial channel loss (unseen) & [TBD] & [TBD] & [TBD] & [TBD] & [TBD] & [TBD] & [TBD]\\
-OOD & Delay jitter (unseen) & [TBD] & [TBD] & [TBD] & [TBD] & [TBD] & [TBD] & [TBD]\\
+ID  & Insole missing & $0.928\pm0.013$ & $0.478\pm0.054$ & $0.945\pm0.014$ & $0.929\pm0.013$ & $0.859\pm0.001$ & $0.500\pm0.000$ & $0.319\pm0.002$\\
+ID  & IMU bias & $0.502\pm0.001$ & $0.534\pm0.003$ & $0.504\pm0.003$ & $0.504\pm0.002$ & $0.502\pm0.000$ & $0.500\pm0.000$ & $0.514\pm0.000$\\
+ID  & Burst packet loss (unseen) & $0.743\pm0.009$ & $0.499\pm0.000$ & $0.504\pm0.001$ & $0.515\pm0.002$ & $0.918\pm0.003$ & $0.057\pm0.008$ & $0.503\pm0.001$\\
+OOD & Partial channel loss (unseen) & $0.813\pm0.004$ & $0.499\pm0.000$ & $0.501\pm0.001$ & $0.508\pm0.002$ & $0.961\pm0.001$ & $1.000\pm0.000$ & $0.500\pm0.001$\\
+OOD & Delay jitter (unseen) & $0.765\pm0.007$ & $0.481\pm0.002$ & $0.550\pm0.006$ & $0.545\pm0.005$ & $0.498\pm0.000$ & $0.964\pm0.004$ & $0.504\pm0.002$\\
 \bottomrule
 \end{tabular}
 \caption{Representative clean-versus-fault AUROC. ``Unseen'' marks generators excluded from model training and detector selection. The full table reports every preregistered fault.}
@@ -393,11 +390,10 @@ OOD & Delay jitter (unseen) & [TBD] & [TBD] & [TBD] & [TBD] & [TBD] & [TBD] & [T
 
 \subsection{Safety--Utility Trade-off}
 
-% Populate from scripts/build_aaai_tables.py output table2_safety.tsv.
 Detection quality alone does not establish a safer assistance policy.
 Table~\ref{tab:safety} therefore compares the proposed estimator before and after applying the frozen gate.
-On clean ID and OOD trials, the gate retains \textbf{[TBD]} and \textbf{[TBD]} of aligned assistance, with wrong-direction changes of \textbf{[TBD]} and \textbf{[TBD]}.
-Across trained fault types, gating changes the wrong-direction ratio by \textbf{[TBD]} on ID and \textbf{[TBD]} on OOD tasks; for unseen generators, the changes are \textbf{[TBD]} and \textbf{[TBD]}.
+On clean ID and OOD trials, the gate retains $0.982$ and $0.981$ of aligned assistance, with wrong-direction changes of $-0.0001$ and $-0.0030$.
+Across the reported training-time fault types, gating changes the wrong-direction ratio by $-0.0003$ on ID and $-0.0034$ on OOD tasks; for unseen generators, the changes are $-0.0002$ and $-0.0036$.
 The associated retained-assistance values quantify the price of this reduction rather than treating lower torque as automatically safer.
 Peak wrong torque and command jerk follow the same comparison in the complete results, and actuator-replay outcomes are reported only as offline proxies.
 
@@ -409,12 +405,12 @@ Peak wrong torque and command jerk follow the same comparison in the complete re
 \toprule
 Scenario & Wrong-U & Wrong-G & Delta & Ret. & Gate\\
 \midrule
-ID clean & [TBD] & [TBD] & [TBD] & [TBD] & [TBD]\\
-OOD clean & [TBD] & [TBD] & [TBD] & [TBD] & [TBD]\\
-ID seen faults & [TBD] & [TBD] & [TBD] & [TBD] & [TBD]\\
-ID unseen faults & [TBD] & [TBD] & [TBD] & [TBD] & [TBD]\\
-OOD seen faults & [TBD] & [TBD] & [TBD] & [TBD] & [TBD]\\
-OOD unseen faults & [TBD] & [TBD] & [TBD] & [TBD] & [TBD]\\
+ID clean & $0.075$ & $0.075$ & $-0.0001$ & $0.982$ & $0.991$\\
+OOD clean & $0.077$ & $0.074$ & $-0.0030$ & $0.981$ & $0.973$\\
+ID seen faults & $0.092$ & $0.092$ & $-0.0003$ & $0.918$ & $0.964$\\
+ID unseen faults & $0.087$ & $0.086$ & $-0.0002$ & $0.962$ & $0.983$\\
+OOD seen faults & $0.102$ & $0.098$ & $-0.0034$ & $0.943$ & $0.960$\\
+OOD unseen faults & $0.087$ & $0.083$ & $-0.0036$ & $0.976$ & $0.968$\\
 \bottomrule
 \end{tabular}
 \caption{Utility-aware gating trade-off. U and G denote ungated and gated commands; $\Delta=\mathrm{Wrong}_g-\mathrm{Wrong}_u$ (negative is safer), Ret. is the gated-to-ungated aligned-torque ratio, and Gate is the mean gain.}
@@ -424,9 +420,10 @@ OOD unseen faults & [TBD] & [TBD] & [TBD] & [TBD] & [TBD]\\
 \subsection{Ablations and Stress Tests}
 
 Table~\ref{tab:ablation} follows the preregistered attribution sequence rather than removing several interacting components at once.
-Fault augmentation changes macro fault AUROC by \textbf{[TBD]} and clean OOD RMSE by \textbf{[TBD]}.
-Adding probabilistic prediction, reconstruction, and forecasting produces successive AUROC changes of \textbf{[TBD]}, \textbf{[TBD]}, and \textbf{[TBD]}; their effects on wrong-direction torque are reported in the final column.
-These paired results distinguish improvements due to exposure to corrupted inputs from those due to a particular reliability head.
+Because the component sweep was run for one attribution seed, it is treated as diagnostic evidence rather than as the primary three-seed claim.
+Fault augmentation changes macro fault AUROC by $+0.067$ and clean OOD RMSE by $+0.029$ Nm/kg in this sweep.
+Adding probabilistic prediction, reconstruction, and forecasting produces successive AUROC changes of $-0.083$, $+0.085$, and $-0.020$; their effects on wrong-direction torque are reported in the final column.
+These results distinguish improvements due to exposure to corrupted inputs from those due to a particular reliability head, while also showing that not every auxiliary head improves the single-seed aggregate.
 
 \begin{table}[t]
 \centering
@@ -436,11 +433,11 @@ These paired results distinguish improvements due to exposure to corrupted input
 \toprule
 Model & RMSE & AUC & Wrong-D & Ret.\\
 \midrule
-Deterministic & [TBD] & [TBD] & -- & --\\
-+ fault augmentation & [TBD] & [TBD] & [TBD] & [TBD]\\
-+ probabilistic head & [TBD] & [TBD] & [TBD] & [TBD]\\
-+ reconstruction & [TBD] & [TBD] & [TBD] & [TBD]\\
-+ forecasting (proposed) & [TBD] & [TBD] & [TBD] & [TBD]\\
+Deterministic & $0.2309$ & $0.628$ & -- & --\\
++ fault augmentation & $0.2598$ & $0.695$ & $-0.0177$ & $0.731$\\
++ probabilistic head & $0.2472$ & $0.612$ & $-0.0152$ & $0.746$\\
++ reconstruction & $0.2613$ & $0.697$ & $-0.0017$ & $0.785$\\
++ forecasting (proposed) & $0.2578$ & $0.677$ & $-0.0023$ & $0.798$\\
 \bottomrule
 \end{tabular}
 \caption{Ordered component attribution. Fault AUC and control metrics are macro-averaged over the fixed fault set; all rows use the same data split and training budget.}
@@ -448,9 +445,11 @@ Deterministic & [TBD] & [TBD] & -- & --\\
 \end{table}
 
 Fault-severity sweeps provide a stricter test than a single operating point.
-At the largest packet-loss rate and delay considered, fused AUROC is \textbf{[TBD]} and \textbf{[TBD]}, while the gate retains \textbf{[TBD]} of aligned assistance and changes wrong-direction torque by \textbf{[TBD]}.
+At the largest packet-loss rate considered, fused AUROC is $0.961$ on ID tasks and $0.914$ on OOD tasks; the corresponding retained-assistance ratios are $0.976$ and $0.976$, with wrong-direction changes of $-0.0001$ and $-0.0032$.
+At the largest fixed delay, fused AUROC is $0.899$ on ID tasks and $0.788$ on OOD tasks; the gate retains $0.855$ and $0.966$ of aligned assistance and changes wrong-direction torque by $-0.0012$ and $-0.0051$.
 The action-input ablation further tests whether desired, measured, execution, or interaction torque improves detection or creates a device-specific shortcut.
-Across leave-one-subject-out folds, the principal safety effect is \textbf{[TBD]}, indicating \textbf{[TBD interpretation after confidence intervals are available]}.
+Across leave-one-subject-out folds, the principal safety effect is packet-loss shutdown (wrong-direction deltas $-0.097$ ID and $-0.150$ OOD with zero retained assistance), whereas non-packet faults average only $-0.0029$ and $-0.0099$ wrong-direction change.
+This indicates that subject-transfer behavior is conservative and mechanism-specific rather than a broad corrective safety effect.
 
 \section{Discussion}
 
@@ -459,8 +458,8 @@ Across leave-one-subject-out folds, the principal safety effect is \textbf{[TBD]
 The proposed framing treats estimator reliability as a control variable rather than only a confidence visualization.
 Its central design implication is that missing channels, frozen streams, asynchronous modalities, slow drift, and behavioral OOD violate different properties of a sensor sequence.
 The per-fault comparison tests this interpretation more stringently than macro-AUROC: a useful fusion should improve worst-case coverage rather than only mean discrimination.
-In our results, \textbf{[TBD signal]} is most informative for \textbf{[TBD fault family]}, whereas \textbf{[TBD signal]} contributes most under \textbf{[TBD fault family]}.
-The remaining weakness on \textbf{[TBD failure mode]} shows that additional channels do not make every corruption identifiable.
+In our results, reconstruction residuals are most informative for missing-insole faults, staleness dominates packet-loss faults, and coherence contributes most under partial channel loss and delay faults.
+The remaining weakness on IMU bias shows that additional channels do not make every corruption identifiable.
 
 This distinction also explains why task OOD and sensor failure should not be collapsed into one binary anomaly label.
 A valid novel movement may deserve assistance even when epistemic uncertainty rises, while a familiar movement with a frozen encoder should trigger attenuation immediately.
@@ -471,14 +470,14 @@ Holding unseen participants, tasks, and fault generators out of policy selection
 
 AUROC is threshold-independent and does not measure the consequence of a reliability decision.
 The gate instead makes the consequence explicit: it trades retained aligned torque against exposure to wrong-direction torque at every timestep.
-The observed trade-off---\textbf{[TBD reduction]} wrong-direction assistance for \textbf{[TBD retention]} clean aligned assistance---should therefore be interpreted as an operating point, not as a universal safety threshold.
+The observed trade-off---about a $0.002$ absolute mean reduction in wrong-direction assistance across non-clean main-suite rows while retaining $0.981$ of clean aligned assistance and $0.945$ on faulted rows---should therefore be interpreted as an operating point, not as a universal safety threshold.
 Applications with different actuator authority or user tolerance can select another point on the validation Pareto curve without retraining the estimator.
 
 Attenuation is deliberately conservative.
 The gate can reduce the magnitude of an estimate judged unreliable, but it cannot repair its direction, identify the failed component with certainty, or decide an optimal fallback torque.
 Moreover, uniformly low torque could trivially reduce several risk metrics while eliminating benefit.
 Reporting clean and faulty retained assistance, mean gate, jerk, and wrong-direction torque together prevents that degenerate policy from appearing successful.
-The result on \textbf{[TBD hardest fault]} is particularly informative because it exposes \textbf{[TBD whether the limitation is detection, calibration, or the gate response]}.
+The result on IMU bias is particularly informative because it exposes a detection limitation rather than merely a calibration or gate-response issue: fused AUROC remains near chance and the gate changes wrong-direction torque by at most $0.003$ absolute.
 
 \subsection{Relationship to Data and Task Generalization}
 
