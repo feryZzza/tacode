@@ -11,7 +11,18 @@ venv/
 
 # Generated experiment outputs
 logs/
-reports/
+# reports/ 整体不入库，但要给汇总目录留口子。这里必须写 reports/* 而不是 reports/：
+# 排除目录本身会让 git 不再往下遍历，后面的否定规则就不起作用了。
+reports/*
+# 例外：稿件图表的数字全部从这个汇总目录读取（1.4 MB 的 TSV/JSON，无 checkpoint）。
+# 不入库的话在别的机器上 clone 后跑 make figures 会静默退回旧的 FALLBACK 常量。
+!reports/v2_fc_paper_suite/
+!reports/AAAI27_CODE_COMMIT.txt
+!reports/AAAI27_GIT_STATUS.txt
+!reports/AAAI27_REPORT_MANIFEST.txt
+# 已入库的两个 smoke 报告继续保留。
+!reports/reliability_human/
+!reports/reliability_smoke/
 
 # Packaged artifacts rebuilt by scripts/package_aaai_metrics.sh and the zip step
 aaai27_metrics.tar.gz

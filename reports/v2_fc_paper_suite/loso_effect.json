@@ -1,0 +1,232 @@
+{
+  "n_folds": 15,
+  "effect_mean": 0.004398268268064216,
+  "effect_median": 0.0015295110642910004,
+  "effect_sd": 0.004684146279085945,
+  "effect_min": 0.0003884496788183848,
+  "effect_max": 0.013065430853101943,
+  "ci95_low": 0.002265024405938608,
+  "ci95_high": 0.0067382372363849925,
+  "improved_folds": 15,
+  "clean_retention_mean": 0.9608184143888031,
+  "clean_retention_min": 0.8800622297512465,
+  "bootstrap_draws": 10000,
+  "bootstrap_seed": 0,
+  "folds": [
+    {
+      "fold": "v2_fc_loso_BT01",
+      "n_scenarios": 18,
+      "effect": 0.000990468594763014,
+      "clean_retention": 0.9665846686029285,
+      "missing": []
+    },
+    {
+      "fold": "v2_fc_loso_BT02",
+      "n_scenarios": 18,
+      "effect": 0.0007763753334681193,
+      "clean_retention": 0.9744878312504687,
+      "missing": []
+    },
+    {
+      "fold": "v2_fc_loso_BT03",
+      "n_scenarios": 18,
+      "effect": 0.0003884496788183848,
+      "clean_retention": 0.987415872438956,
+      "missing": []
+    },
+    {
+      "fold": "v2_fc_loso_BT06",
+      "n_scenarios": 18,
+      "effect": 0.012557331058714125,
+      "clean_retention": 0.9375532106339902,
+      "missing": []
+    },
+    {
+      "fold": "v2_fc_loso_BT07",
+      "n_scenarios": 18,
+      "effect": 0.0020745276576942867,
+      "clean_retention": 0.9723361729460689,
+      "missing": []
+    },
+    {
+      "fold": "v2_fc_loso_BT08",
+      "n_scenarios": 18,
+      "effect": 0.00101237330171797,
+      "clean_retention": 0.9841761594368456,
+      "missing": []
+    },
+    {
+      "fold": "v2_fc_loso_BT09",
+      "n_scenarios": 18,
+      "effect": 0.009443437887562646,
+      "clean_retention": 0.9447959198057172,
+      "missing": []
+    },
+    {
+      "fold": "v2_fc_loso_BT10",
+      "n_scenarios": 18,
+      "effect": 0.0012770874632729425,
+      "clean_retention": 0.9788768139749073,
+      "missing": []
+    },
+    {
+      "fold": "v2_fc_loso_BT11",
+      "n_scenarios": 18,
+      "effect": 0.0039387788209650255,
+      "clean_retention": 0.9640177382056656,
+      "missing": []
+    },
+    {
+      "fold": "v2_fc_loso_BT12",
+      "n_scenarios": 18,
+      "effect": 0.0007913249234358469,
+      "clean_retention": 0.9744406103180036,
+      "missing": []
+    },
+    {
+      "fold": "v2_fc_loso_BT13",
+      "n_scenarios": 18,
+      "effect": 0.0007425103750493792,
+      "clean_retention": 0.9844447205672667,
+      "missing": []
+    },
+    {
+      "fold": "v2_fc_loso_BT14",
+      "n_scenarios": 18,
+      "effect": 0.008018962625000212,
+      "clean_retention": 0.9319286229622368,
+      "missing": []
+    },
+    {
+      "fold": "v2_fc_loso_BT15",
+      "n_scenarios": 18,
+      "effect": 0.009367454383108351,
+      "clean_retention": 0.9446393563748409,
+      "missing": []
+    },
+    {
+      "fold": "v2_fc_loso_BT16",
+      "n_scenarios": 18,
+      "effect": 0.0015295110642910004,
+      "clean_retention": 0.9865162885629037,
+      "missing": []
+    },
+    {
+      "fold": "v2_fc_loso_BT17",
+      "n_scenarios": 18,
+      "effect": 0.013065430853101943,
+      "clean_retention": 0.8800622297512465,
+      "missing": []
+    }
+  ],
+  "per_scenario_wrong_delta": {
+    "test_id/encoder_dropout": {
+      "mean": -0.005391201873620351,
+      "sd": 0.008166329949340943,
+      "n_folds": 15,
+      "retained_ratio_mean": 0.8294247486611808
+    },
+    "test_id/imu_bias": {
+      "mean": -0.0007845039168993632,
+      "sd": 0.0009770453163026954,
+      "n_folds": 15,
+      "retained_ratio_mean": 0.9656031792404737
+    },
+    "test_id/insole_missing": {
+      "mean": -0.0017534966270128887,
+      "sd": 0.0025767129713263016,
+      "n_folds": 15,
+      "retained_ratio_mean": 0.9027149736300152
+    },
+    "test_id/packet_loss": {
+      "mean": -0.000884169340133667,
+      "sd": 0.0011576763153959193,
+      "n_folds": 15,
+      "retained_ratio_mean": 0.961675834202729
+    },
+    "test_id/packet_loss_burst": {
+      "mean": -0.0012076899409294128,
+      "sd": 0.0020117545735768225,
+      "n_folds": 15,
+      "retained_ratio_mean": 0.9547849340140528
+    },
+    "test_id/packet_loss_partial": {
+      "mean": -0.0008301898837089538,
+      "sd": 0.0010706219531403441,
+      "n_folds": 15,
+      "retained_ratio_mean": 0.9629705343963432
+    },
+    "test_id/sensor_delay": {
+      "mean": -0.002382179101308187,
+      "sd": 0.002906036965955174,
+      "n_folds": 15,
+      "retained_ratio_mean": 0.9479406976738746
+    },
+    "test_id/sensor_delay_jitter": {
+      "mean": -0.0027680436770121256,
+      "sd": 0.003349767029666728,
+      "n_folds": 15,
+      "retained_ratio_mean": 0.9442488708475442
+    },
+    "test_id/stuck_imu": {
+      "mean": -0.003913391133149465,
+      "sd": 0.005494346237701678,
+      "n_folds": 15,
+      "retained_ratio_mean": 0.9083226150906925
+    },
+    "test_ood/encoder_dropout": {
+      "mean": -0.005888445178667704,
+      "sd": 0.006315292710283591,
+      "n_folds": 15,
+      "retained_ratio_mean": 0.8495263691729779
+    },
+    "test_ood/imu_bias": {
+      "mean": -0.00491351435581843,
+      "sd": 0.00474445868593988,
+      "n_folds": 15,
+      "retained_ratio_mean": 0.9594192162249819
+    },
+    "test_ood/insole_missing": {
+      "mean": -0.006547399858633677,
+      "sd": 0.0071517682580746296,
+      "n_folds": 15,
+      "retained_ratio_mean": 0.9345137563219696
+    },
+    "test_ood/packet_loss": {
+      "mean": -0.0050858189662297566,
+      "sd": 0.004940190133343709,
+      "n_folds": 15,
+      "retained_ratio_mean": 0.9572122694634242
+    },
+    "test_ood/packet_loss_burst": {
+      "mean": -0.005590794483820597,
+      "sd": 0.005652950561670152,
+      "n_folds": 15,
+      "retained_ratio_mean": 0.9476494505607012
+    },
+    "test_ood/packet_loss_partial": {
+      "mean": -0.005134842296441396,
+      "sd": 0.00499170072717248,
+      "n_folds": 15,
+      "retained_ratio_mean": 0.9585619914424007
+    },
+    "test_ood/sensor_delay": {
+      "mean": -0.009369056423505146,
+      "sd": 0.009529577169792471,
+      "n_folds": 15,
+      "retained_ratio_mean": 0.9560323714439614
+    },
+    "test_ood/sensor_delay_jitter": {
+      "mean": -0.009748974442481994,
+      "sd": 0.010082883422835805,
+      "n_folds": 15,
+      "retained_ratio_mean": 0.9557286878989398
+    },
+    "test_ood/stuck_imu": {
+      "mean": -0.006975117325782776,
+      "sd": 0.006761741717484327,
+      "n_folds": 15,
+      "retained_ratio_mean": 0.9483992732315755
+    }
+  }
+}

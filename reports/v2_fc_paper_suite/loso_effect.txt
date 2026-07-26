@@ -1,0 +1,25 @@
+v2_fc_loso_BT01        effect=+0.00099 clean_ret=0.967 n=18
+v2_fc_loso_BT02        effect=+0.00078 clean_ret=0.974 n=18
+v2_fc_loso_BT03        effect=+0.00039 clean_ret=0.987 n=18
+v2_fc_loso_BT06        effect=+0.01256 clean_ret=0.938 n=18
+v2_fc_loso_BT07        effect=+0.00207 clean_ret=0.972 n=18
+v2_fc_loso_BT08        effect=+0.00101 clean_ret=0.984 n=18
+v2_fc_loso_BT09        effect=+0.00944 clean_ret=0.945 n=18
+v2_fc_loso_BT10        effect=+0.00128 clean_ret=0.979 n=18
+v2_fc_loso_BT11        effect=+0.00394 clean_ret=0.964 n=18
+v2_fc_loso_BT12        effect=+0.00079 clean_ret=0.974 n=18
+v2_fc_loso_BT13        effect=+0.00074 clean_ret=0.984 n=18
+v2_fc_loso_BT14        effect=+0.00802 clean_ret=0.932 n=18
+v2_fc_loso_BT15        effect=+0.00937 clean_ret=0.945 n=18
+v2_fc_loso_BT16        effect=+0.00153 clean_ret=0.987 n=18
+v2_fc_loso_BT17        effect=+0.01307 clean_ret=0.880 n=18
+
+n=15  mean=+0.00440  median=+0.00153  sd=0.00468
+95% bootstrap CI = [+0.00227, +0.00674]
+range = [+0.00039, +0.01307]
+improved folds = 15/15
+clean retention mean = 0.961 (min 0.880)
+
+In percentage points: mean=+0.440 pp, CI=[+0.227, +0.674] pp
+
+Wrote reports/v2_fc_paper_suite/loso_effect.json
