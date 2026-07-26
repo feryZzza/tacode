@@ -25,11 +25,13 @@ else
 fi
 
 # 2. 所有 prob_aug_recon_fc 报告都要晚于 forecast 修正的生效时间。
-# 修正若尚未提交，commit 时间会低估它，所以取 commit 时间与文件 mtime 的较晚者。
+# 要判的是"修正后的代码内容从什么时候开始存在"，这个时刻既不等于 commit 时间
+# 也不等于 mtime：修正先写后提交时 commit 时间偏晚（会把合法报告误判为过期），
+# 新克隆的仓库里 mtime 是 checkout 时间又偏晚。两者取较早者在两种情形下都正确。
 fix_commit="$(git log -1 --format=%H -- reliability/metrics.py)"
 fix_epoch="$(git log -1 --format=%ct -- reliability/metrics.py)"
 metrics_mtime="$(stat -c %Y reliability/metrics.py)"
-(( metrics_mtime > fix_epoch )) && fix_epoch="${metrics_mtime}"
+(( metrics_mtime < fix_epoch )) && fix_epoch="${metrics_mtime}"
 if ! git diff --quiet -- reliability/metrics.py; then
 	note "NOTE" "reliability/metrics.py 有未提交改动；AAAI27_GIT_STATUS.txt 会记录脏树状态"
 fi
