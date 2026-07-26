@@ -13,6 +13,11 @@ venv/
 logs/
 reports/
 
+# Packaged artifacts rebuilt by scripts/package_aaai_metrics.sh and the zip step
+aaai27_metrics.tar.gz
+aaai27_metrics.tar.gz.sha256
+aaai27_paper_submission.zip
+
 # Local full-text paper extracts; keep curated Markdown notes instead
 paper/*.txt
 
