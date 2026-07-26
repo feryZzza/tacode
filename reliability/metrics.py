@@ -37,12 +37,18 @@ def forecast_residual(
 	horizon: int = 1,
 	feature_groups: Optional[Dict[str, Iterable[int]]] = None,
 ) -> torch.Tensor:
-	"""一步(或 h 步)预测残差：forecast[t] 对照 input_norm[t+h]，[B,1,T]。
+	"""一步(或 h 步)预测残差，在目标到达时刻 t+h 发布，[B,1,T]。
 
 	因果 TCN 下同时刻重构平凡，无法察觉 packet_loss(前值保持)/sensor_delay
 	(相位错位)/imu_bias(累积漂移)——这些故障值仍合理，只破坏时间可预测性。
 	一步预测在干净输入上学真实动态，故障会使预测残差升高，与 reconstruction_residual
-	形成互补检测信号。末尾 h 帧无未来真值，用最后有效残差补齐以保持时间维一致。
+	形成互补检测信号。
+
+	因果性：`forecast[t]` 预测 `input_norm[t+h]`，该残差只有等到 `t+h` 观测到达后
+	才可计算，因此写在时间轴的 `t+h` 位置。在线门控在时刻 u 只会读到由
+	`forecast[u-h]` 与 `input_norm[u]` 构成的残差，不含任何未来信息。开头 h 帧
+	没有对应预测(需要 `forecast[-h]`)，置 0；`eval_ignore_history` 远大于 h，
+	这些帧本就被掩掉。
 	"""
 	horizon = max(int(horizon), 1)
 	if forecast.shape[-1] <= horizon:
@@ -62,9 +68,12 @@ def forecast_residual(
 			residual = per_channel.mean(dim=1, keepdim=True)
 	else:
 		residual = per_channel.mean(dim=1, keepdim=True)
-	# 末尾 horizon 帧无未来真值：用最后一帧残差向右补齐，时间维与输入对齐。
-	pad = residual[..., -1:].expand(residual.shape[0], residual.shape[1], horizon)
-	return torch.cat([residual, pad], dim=-1)
+	# 开头 horizon 帧无可用预测：置 0 右移，使残差在其目标到达的时刻发布。
+	pad = torch.zeros(
+		residual.shape[0], residual.shape[1], horizon,
+		device=residual.device, dtype=residual.dtype,
+	)
+	return torch.cat([pad, residual], dim=-1)
 
 
 def staleness_score(
