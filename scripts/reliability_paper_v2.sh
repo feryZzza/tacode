@@ -185,6 +185,16 @@ train_run() {
 	local seed="$1"; shift
 	local stamp; stamp="$(date +%Y%m%d_%H%M%S)"
 	local log="${LOG_DIR}/$(basename "${output_dir}")_${stamp}.log"
+	# 同一个 output_dir 不能被两个训练同时写（checkpoint 每个 epoch 覆盖，会互相污染），
+	# 也不该在已训完后重训。comparison.tsv 只在训练收尾时写出，是可靠的完成标记。
+	if [[ "${TRAIN_SKIP_COMPLETED:-1}" == "1" && -s "${output_dir}/comparison.tsv" ]]; then
+		echo "==> Skip trained ${output_dir}（已有 comparison.tsv）"
+		return 0
+	fi
+	if pgrep -f -- "--output-dir ${output_dir} " >/dev/null 2>&1; then
+		echo "==> Skip ${output_dir}：已有进程在写该目录"
+		return 0
+	fi
 	# 并行时每个 job 只看到一张卡（CUDA_VISIBLE_DEVICES 已重映射），故用 cuda:0。
 	local dev="${DEVICE}"; [[ "${PARALLEL}" == "1" && "${DEVICE}" == cuda* ]] && dev="cuda"
 	local recon_detach_flag="--no-recon-detach"
@@ -238,8 +248,11 @@ run_main() {
 # E5：归因消融，固定 seed，逐一比较五种训练模式。
 # prob_aug_recon (无预测头) 与 prob_aug_recon_fc (含预测头) 的对比直接隔离
 # 预测头对 packet_loss/sensor_delay/imu_bias 时序故障检测的贡献。
+# ABLATION_MODES 可只跑梯度里缺的几级（任务 G 补种子时用），默认仍是完整五级。
+ABLATION_MODES="${ABLATION_MODES:-det_noaug det_aug prob_aug prob_aug_recon prob_aug_recon_fc}"
+
 run_ablations() {
-	for mode in det_noaug det_aug prob_aug prob_aug_recon prob_aug_recon_fc; do
+	for mode in ${ABLATION_MODES}; do
 		train_run "reports/v2_ablation_${mode}_seed${ABLATION_SEED}" human "${mode}" "${ABLATION_SEED}"
 	done
 }

@@ -25,6 +25,7 @@ CORE_SCENARIOS = [
 	"test_id/encoder_dropout",
 	"test_id/imu_bias",
 	"test_id/packet_loss",
+	"test_id/stuck_imu",
 	"test_id/packet_loss_burst",
 	"test_id/packet_loss_partial",
 	"test_id/sensor_delay",
@@ -33,6 +34,7 @@ CORE_SCENARIOS = [
 	"test_ood/encoder_dropout",
 	"test_ood/imu_bias",
 	"test_ood/packet_loss",
+	"test_ood/stuck_imu",
 	"test_ood/packet_loss_burst",
 	"test_ood/packet_loss_partial",
 	"test_ood/sensor_delay",
@@ -231,6 +233,21 @@ def report_metadata(report: dict[str, Any]) -> dict[str, Any]:
 
 def classify_run_family(report: dict[str, Any]) -> str:
 	run = report.get("_run", "")
+	# v2_fc_*: forecast_residual 因果性修正后 + 补齐 stuck_imu 的重评批次。
+	if run.startswith("v2_fc_main_seed"):
+		return "main"
+	if run.startswith("v2_fc_stress_seed"):
+		return "stress"
+	if run.startswith("v2_fc_loso_"):
+		return "loso"
+	if run.startswith("v2_fc_ablation_"):
+		return "ablation"
+	if run.startswith("v2_fc_baseline_"):
+		return "baseline"
+	if run.startswith("v2_fc_action_"):
+		return "action"
+	if run.startswith("v2_fc_ensemble"):
+		return "ensemble"
 	if run.startswith("v2_refreshed_main_seed"):
 		return "main_refreshed"
 	if run.startswith("v2_refreshed_stress_seed"):

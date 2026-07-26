@@ -17,6 +17,7 @@ FAULTS = (
 	"encoder_dropout",
 	"imu_bias",
 	"packet_loss",
+	"stuck_imu",
 	"packet_loss_burst",
 	"packet_loss_partial",
 	"sensor_delay",
