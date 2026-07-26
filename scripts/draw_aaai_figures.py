@@ -64,13 +64,6 @@ TAXONOMY_ROWS = (
 )
 SEEN_FAULTS = ("insole_missing", "encoder_dropout", "imu_bias", "packet_loss", "stuck_imu", "sensor_delay")
 UNSEEN_FAULTS = ("packet_loss_burst", "packet_loss_partial", "sensor_delay_jitter")
-ABLATION_STAGE_LABELS = (
-	"determ-\ninistic",
-	"+ fault\naug.",
-	"+ prob.\nhead",
-	"+ recon-\nstruction",
-	"+ fore-\ncast",
-)
 
 # ---- 内置回退常量：与提交版正文一致，仅在没有汇总目录时使用 ----
 FALLBACK: dict[str, Any] = {
@@ -96,6 +89,7 @@ FALLBACK: dict[str, Any] = {
 		"auroc": (0.846, 0.870, 0.790, 0.818, 0.808),
 		"ood_rmse": (0.2309, 0.2598, 0.2472, 0.2613, 0.2578),
 		"retained": (0.989, 0.983, 0.989, 0.878, 0.916),
+		"wrong_delta": (0.0, 0.0, 0.0, -0.00667, -0.00403),
 	},
 	"stress": [
 		("packet loss 0.30", "ID", 0.961, 0.939, -0.0007),
@@ -294,9 +288,13 @@ def resolve_ablation(suite: Suite) -> dict[str, tuple]:
 			return {
 				"auroc": tuple(auroc), "ood_rmse": tuple(rmse),
 				"retained": tuple(col("fault_retained_ratio", "mean")),
+				# 前三阶段的门控从不闭合，wrong_delta 恒为 0：不画这一列，读者会以为
+				# AUROC 最高的阶段 2 就是最好的系统，而它在控制层面毫无作用。
+				"wrong_delta": tuple(col("wrong_delta_gated_minus_ungated", "mean")),
 				"auroc_sd": tuple(col("macro_fused_auroc", "sd")),
 				"rmse_sd": tuple(col("ood_clean_rmse", "sd")),
 				"retained_sd": tuple(col("fault_retained_ratio", "sd")),
+				"wrong_delta_sd": tuple(col("wrong_delta_gated_minus_ungated", "sd")),
 				"n_seeds": tuple(seeds),
 			}
 	stages = suite.numbers.get("table4_ablation", [])
@@ -305,11 +303,15 @@ def resolve_ablation(suite: Suite) -> dict[str, tuple]:
 		rmse = [as_float(s.get("ood_clean_rmse")) for s in stages]
 		# 图注写的是「在固定故障集合上取宏平均」，所以 retention 用故障集合那一列。
 		retained = [as_float(s.get("fault_retained_ratio")) for s in stages]
+		wrong_delta = [as_float(s.get("wrong_delta_gated_minus_ungated")) for s in stages]
 		if all(v is not None for v in auroc) and all(v is not None for v in rmse):
 			suite.note("ablation", True)
 			# 五个阶段都按同一套验证选门控流程评测，所以每阶段都有定义好的
 			# retained ratio（含确定性阶段），不再把阶段 1 当成「无门控」。
-			return {"auroc": tuple(auroc), "ood_rmse": tuple(rmse), "retained": tuple(retained)}
+			return {
+				"auroc": tuple(auroc), "ood_rmse": tuple(rmse),
+				"retained": tuple(retained), "wrong_delta": tuple(wrong_delta),
+			}
 	suite.note("ablation", False)
 	return {key: tuple(value) for key, value in FALLBACK["ablation"].items()}
 
@@ -417,10 +419,12 @@ def draw_overview_gate_panel(ax, series: dict[str, Any]) -> None:
 
 	handles = ax.get_legend_handles_labels()[0] + twin.get_legend_handles_labels()[0]
 	labels = ax.get_legend_handles_labels()[1] + twin.get_legend_handles_labels()[1]
+	# 两列排时整条宽 488 px、面板只有 403 px：右列的 "gate $g_t$" 和 "normalized risk"
+	# 越过右边框，右轴那条竖线正好从 $g_t$ 的下标上穿过去。竖排一列宽 242 px，
+	# 四行高 109 px（约 0.34 数据单位），落在 1.18–1.52 的留白带里，不压门控曲线。
 	ax.legend(
-		handles, labels, loc="upper left", ncol=2, frameon=False,
-		handlelength=1.2, borderpad=0.0, labelspacing=0.2, columnspacing=0.9,
-		fontsize=5.6,
+		handles, labels, loc="upper left", ncol=1, frameon=False,
+		handlelength=1.2, borderpad=0.0, labelspacing=0.2, fontsize=5.6,
 	)
 	recessive(ax, grid_axis="y")
 
@@ -458,13 +462,17 @@ def load_overview_timeseries(path: Path) -> dict[str, Any] | None:
 def draw_method_overview(path_stem: Path, formats: list[str], series: dict[str, Any] | None = None) -> None:
 	"""方法总览。面板 (a)(b) 是机制示意；(c) 在有导出数据时使用真实逐 timestep 时序。"""
 	# 面板 c 带右轴 + 双 y 标签，默认间距会让标题和轴标签互相压住。
-	fig, axes = plt.subplots(1, 3, figsize=(FULL_WIDTH, 2.1), gridspec_kw={"wspace": 0.34})
+	# 面板 b 的框宽按实测文字宽度排布（见下），三档等宽时排不下，所以多分一点给它。
+	fig, axes = plt.subplots(
+		1, 3, figsize=(FULL_WIDTH, 1.95), gridspec_kw={"width_ratios": [0.88, 1.32, 0.96], "wspace": 0.34}
+	)
 	rng = np.random.default_rng(11)
 	t = np.arange(0, 400)
 
 	# (a) 传感输入 + 一段保持值故障
 	ax = axes[0]
-	panel_tag(ax, "a", "Causal streams, plausible fault")
+	# 标题必须短到不会伸进面板 b 的标签位（assert_no_overlapping_titles 会拦）。
+	panel_tag(ax, "a", "Causal streams, fault")
 	base = 0.55 * np.sin(2 * np.pi * t / 95.0) + 0.12 * np.sin(2 * np.pi * t / 31.0)
 	imu = base + 0.03 * rng.standard_normal(t.size)
 	insole = 0.45 * np.clip(np.sin(2 * np.pi * t / 95.0 + 0.6), 0, None) + 0.02 * rng.standard_normal(t.size)
@@ -482,9 +490,12 @@ def draw_method_overview(path_stem: Path, formats: list[str], series: dict[str, 
 	ax.set_xlim(0, t[-1])
 	# 上方留白带放图例，下方留白带放故障标注。
 	ax.set_ylim(-0.55, 2.55)
+	# 三条图例横排在一行时，整条比面板还宽 269 px，尾部伸进面板 (b) 的框图里——
+	# 编译成 PDF 后 "Insole force" 看着像 (b) 的说明。竖排一列宽 235 px，稳稳在面板内，
+	# 三行高 81 px 也放得进 y=1.72 以上那条 131 px 的留白带。
 	ax.legend(
-		loc="upper left", frameon=False, ncol=3, handlelength=1.1,
-		borderpad=0.0, columnspacing=0.8, fontsize=5.6,
+		loc="upper left", frameon=False, ncol=1, handlelength=1.1,
+		borderpad=0.0, labelspacing=0.2, fontsize=5.6,
 	)
 	recessive(ax, grid_axis="x")
 
@@ -509,27 +520,64 @@ def draw_method_overview(path_stem: Path, formats: list[str], series: dict[str, 
 			FancyArrowPatch((x0, y0), (x1, y1), arrowstyle="-|>", mutation_scale=5.0, lw=0.55, color=color, shrinkA=0, shrinkB=0)
 		)
 
-	# 面板宽度只有约 2 英寸，框宽和字号必须匹配最长的标签行（mean/var、forecast）。
-	box(0.005, 0.50, 0.165, 0.18, "sensor\nwindow", VIOLET, fontsize=5.2)
-	box(0.215, 0.46, 0.145, 0.26, "causal\nTCN", BLUE, fontsize=5.2)
+	# 框宽由文字实测宽度决定，不再手填常量。手填的版本每次改文案都要重新目测，
+	# 而 FancyBboxPatch 不会自动撑开：宽了一点点，文字就伸出去压到邻框上。
+	def box_width(text: str, fontsize: float) -> float:
+		widest = max(text_extent_in_data(ax, line, fontsize)[0] for line in text.split("\n"))
+		return widest + 2 * BOX_PAD + 0.012  # 两侧留 pad，再加一点行末余量
+
+	BOX_PAD = 0.012  # 与 boxstyle 的 pad 一致：几何计算要按含 pad 的外缘算
+	FS = 4.8
+	FS_CHECKS = 4.5
+	src_text, tcn_text = "sensor\nwindow", "causal\nTCN"
+	checks_text = "integrity checks\n(staleness,\ncoherence, drift)"
 	heads = [
 		("moment\nmean/var", GREEN, 0.855),
 		("fault\nlogit", RED, 0.665),
 		("recon-\nstruction", VIOLET, 0.475),
 		("one-step\nforecast", VIOLET, 0.285),
 	]
+	src_w = box_width(src_text, FS)
+	tcn_w = box_width(tcn_text, FS)
+	head_w = max(box_width(text, FS) for text, _, _ in heads)
+	checks_w = box_width(checks_text, FS_CHECKS)
+
+	GAP = 0.022  # 相邻框外缘之间的净距，也是箭头的长度
+	src_x = 0.0
+	tcn_x = src_x + src_w + BOX_PAD + GAP
+	bus_x = tcn_x + tcn_w + BOX_PAD + GAP  # 竖直汇流线
+	head_x = bus_x + GAP
+	checks_x = head_x + head_w + BOX_PAD + GAP
+	# 总宽超过 1 时按比例压缩字号解决不了（文字有最小可读尺寸），这里直接报错，
+	# 让改文案的人知道要么缩短标签、要么给面板更多 width_ratios。
+	total = checks_x + checks_w + BOX_PAD
+	if total > 1.0:
+		raise RuntimeError(f"panel (b) 的框排不进面板：需要 {total:.3f} 宽（>1），请缩短标签或加宽面板")
+
+	box(src_x, 0.50, src_w, 0.18, src_text, VIOLET, fontsize=FS)
+	box(tcn_x, 0.46, tcn_w, 0.26, tcn_text, BLUE, fontsize=FS)
+	arrow(src_x + src_w + BOX_PAD, 0.59, tcn_x - BOX_PAD, 0.59)
+	# 四条斜箭线原先直接从蓝框右缘拉向各个头，最陡的两条会斜穿蓝框的圆角边线，
+	# 看着像线从框里长出来。改成先出一小段、走一条竖直汇流线、再水平进各个头：
+	# 蓝框边线不再被压到，分叉关系也更直观。
 	for text, color, y in heads:
-		box(0.405, y - 0.075, 0.245, 0.15, text, color, fontsize=5.2)
-		arrow(0.36, 0.59, 0.405, y)
-	arrow(0.17, 0.59, 0.215, 0.59)
-	box(0.695, 0.38, 0.30, 0.42, "integrity checks\n(staleness,\ncoherence, drift)", GREY, fontsize=5.2)
-	arrow(0.0875, 0.50, 0.0875, 0.30)
-	arrow(0.0875, 0.30, 0.845, 0.30)
-	arrow(0.845, 0.30, 0.845, 0.38)
+		box(head_x, y - 0.075, head_w, 0.15, text, color, fontsize=FS)
+		arrow(bus_x, y, head_x - BOX_PAD, y)
+	ax.plot([bus_x, bus_x], [heads[-1][2], heads[0][2]], color=GREY, lw=0.55, solid_capstyle="butt", zorder=1)
+	ax.plot([tcn_x + tcn_w + BOX_PAD, bus_x], [0.59, 0.59], color=GREY, lw=0.55, solid_capstyle="butt", zorder=1)
+	box(checks_x, 0.38, checks_w, 0.42, checks_text, GREY, fontsize=FS_CHECKS)
+	# 原始输入也送进完整性检查：走在所有框下方（y=0.19）绕过去，不穿框体。
+	# 三段都画成箭头时，两个转角各多一个箭头，看着像三条独立的、方向互相矛盾的线；
+	# 中间两段改成纯线段，只在终点保留一个箭头。
+	feed_x = src_x + src_w / 2
+	checks_mid = checks_x + checks_w / 2
+	ax.plot([feed_x, feed_x], [0.50, 0.19], color=GREY, lw=0.55, solid_capstyle="butt", zorder=1)
+	ax.plot([feed_x, checks_mid], [0.19, 0.19], color=GREY, lw=0.55, solid_capstyle="butt", zorder=1)
+	arrow(checks_mid, 0.19, checks_mid, 0.38 - BOX_PAD)
 	ax.text(
-		0.5, 0.02,
+		0.5, 0.005,
 		"calibration, detector subset, and gate tuning\nuse validation data only",
-		ha="center", va="bottom", fontsize=5.4, color=GREY,
+		ha="center", va="bottom", fontsize=5.2, color=GREY,
 	)
 
 	# (c) 风险 -> 门控 -> 力矩衰减
@@ -537,11 +585,10 @@ def draw_method_overview(path_stem: Path, formats: list[str], series: dict[str, 
 	panel_tag(ax, "c", "Risk above deadband attenuates")
 	if series is not None:
 		draw_overview_gate_panel(ax, series)
-		fig.text(
-			0.5, -0.045,
+		figure_note(
+			fig,
 			"Panel a is an illustrative trace; panel c is a measured per-timestep export "
 			f"({series['meta'].get('fault', '')} on {series['meta'].get('split', '')}).",
-			ha="center", fontsize=5.6, color=GREY,
 		)
 		save(fig, path_stem, formats)
 		return
@@ -563,18 +610,182 @@ def draw_method_overview(path_stem: Path, formats: list[str], series: dict[str, 
 	ax.legend(loc="center left", frameon=False, handlelength=1.4, borderpad=0.1)
 	recessive(ax, grid_axis="y")
 
-	fig.text(
-		0.5, -0.045,
+	figure_note(
+		fig,
 		"Panels a and c are illustrative traces of the mechanism, not measured per-timestep exports.",
-		ha="center", fontsize=5.6, color=GREY,
 	)
 	save(fig, path_stem, formats)
 
 
+def figure_note(fig, text: str, fontsize: float = 5.6, gap_points: float = 3.0) -> None:
+	"""把脚注放在所有面板内容的下方。
+
+	原来是手填 `fig.text(0.5, -0.045, ...)`：那个 -0.045 是按当时的面板高度目测的，
+	面板一变（图 1 的 x 轴标签换行、图例挪到轴下）脚注就压在 "time (samples)" 上，
+	PDF 里两行字直接叠在一起。这里改成量出最低的内容边缘再往下让 gap_points 排版点。
+
+	脚注还要按图宽折行。一行排不下时它不会被裁掉，而是把 `bbox="tight"` 的裁剪框
+	向两侧撑开：图 4 的两句脚注让 PDF 的 MediaBox 变成 9.32 in，再按 `\\textwidth`
+	（7.0 in）放进正文就等于把整张图连字号一起缩到 75%，比同页其他图明显小一号。
+	"""
+	fig.canvas.draw()
+	renderer = fig.canvas.get_renderer()
+	bottoms = [ax.get_tightbbox(renderer).y0 for ax in fig.axes]
+	# 轴下方的图例算不算进 tightbbox 取决于版本，索性显式再量一遍。
+	bottoms += [ax.get_legend().get_window_extent(renderer).y0 for ax in fig.axes if ax.get_legend()]
+	lowest = min(bottoms)
+	height_px = fig.get_figheight() * fig.dpi
+	y = (lowest - gap_points * fig.dpi / 72.0) / height_px
+	limit_px = fig.get_figwidth() * fig.dpi
+
+	def width_of(candidate: str) -> float:
+		probe = fig.text(0.5, y, candidate, ha="center", va="top", fontsize=fontsize)
+		extent = probe.get_window_extent(renderer)
+		probe.remove()
+		return extent.width
+
+	lines: list[str] = []
+	pending = text.split()
+	while pending:
+		line = pending.pop(0)
+		while pending and width_of(f"{line} {pending[0]}") <= limit_px:
+			line = f"{line} {pending.pop(0)}"
+		lines.append(line)
+	fig.text(0.5, y, "\n".join(lines), ha="center", va="top", fontsize=fontsize, color=GREY, linespacing=1.35)
+
+
+def assert_no_clipping(fig) -> None:
+	"""检查每个轴标签是否落在最终裁剪框内，越界就报错。
+
+	`savefig.bbox="tight"` 计算裁剪框时不把轴标签的横向溢出算进去（它按面板的
+	tightbbox 汇总）。一个比自己面板还宽的 xlabel 因此会被静默截掉尾字母——
+	"active steps" 输出成 "active step"，PDF 里也一样，看图才发现。
+	与其每张图目测，不如出图时自己量：宁可 make figures 失败，也不要交一张缺字的图。
+	"""
+	fig.canvas.draw()
+	renderer = fig.canvas.get_renderer()
+	clip = fig.get_tightbbox(renderer)  # 英寸
+	dpi = fig.dpi
+	x0, x1 = clip.x0 * dpi, clip.x1 * dpi
+	y0, y1 = clip.y0 * dpi, clip.y1 * dpi
+	for ax in fig.axes:
+		for label in (ax.xaxis.label, ax.yaxis.label, ax.title):
+			if not label.get_text():
+				continue
+			bbox = label.get_window_extent(renderer=renderer)
+			# 半个像素的浮点余量：tight 框本身就是由这些文字的 extent 拼出来的。
+			if bbox.x0 < x0 - 0.5 or bbox.x1 > x1 + 0.5 or bbox.y0 < y0 - 0.5 or bbox.y1 > y1 + 0.5:
+				raise RuntimeError(
+					f"标签 {label.get_text()!r} 会被 bbox=tight 裁掉"
+					f"（文字 x=[{bbox.x0:.0f},{bbox.x1:.0f}]，裁剪框 x=[{x0:.0f},{x1:.0f}]）；"
+					"请加宽该面板的 width_ratios 或缩短标签"
+				)
+
+
+def assert_no_overlapping_titles(fig) -> None:
+	"""相邻面板的标题不能互相压住。
+
+	标题是 loc="left" 的左对齐文本，宽度不受面板宽度约束：面板 a 的标题一长，
+	尾部就会伸到面板 b 的标签 "b" 上（"plausible fault" 直接和 "b" 挤成一团）。
+	改 width_ratios 时最容易触发这个，所以出图时一并检查。
+	"""
+	fig.canvas.draw()
+	renderer = fig.canvas.get_renderer()
+	boxes = []
+	for ax in fig.axes:
+		if ax.title.get_text():
+			boxes.append((ax.title.get_text(), ax.title.get_window_extent(renderer=renderer)))
+	for i in range(len(boxes)):
+		for j in range(i + 1, len(boxes)):
+			(t1, b1), (t2, b2) = boxes[i], boxes[j]
+			if b1.x1 > b2.x0 + 0.5 and b2.x1 > b1.x0 + 0.5 and b1.y1 > b2.y0 + 0.5 and b2.y1 > b1.y0 + 0.5:
+				raise RuntimeError(f"面板标题 {t1!r} 与 {t2!r} 互相重叠；请缩短标题或调整 width_ratios")
+
+
+def assert_legends_inside_panels(fig) -> None:
+	"""图例不能横向溢出自己的面板。
+
+	`bbox=tight` 只保证图例不被裁掉，不保证它待在自己面板里：面板 (a) 的三列图例
+	一旦比面板宽，尾部就伸进面板 (b)，读者会以为那条图例属于隔壁的图；面板 (c) 的
+	图例更糟——右轴那条竖线正好从 "gate $g_t$" 的下标上穿过去。
+	纵向不检查：图例常常故意放在轴下方（bbox_to_anchor 负 y），那是有意的。
+	"""
+	fig.canvas.draw()
+	renderer = fig.canvas.get_renderer()
+	for ax in fig.axes:
+		legend = ax.get_legend()
+		if legend is None:
+			continue
+		lb = legend.get_window_extent(renderer)
+		ab = ax.get_window_extent(renderer)
+		# 1 pt 余量：图例边框和面板边框重合时不算溢出。
+		if lb.x0 < ab.x0 - 1.0 or lb.x1 > ab.x1 + 1.0:
+			raise RuntimeError(
+				f"图例 {[t.get_text() for t in legend.get_texts()]} 超出面板宽度"
+				f"（图例 x=[{lb.x0:.0f},{lb.x1:.0f}]，面板 x=[{ab.x0:.0f},{ab.x1:.0f}]）；"
+				"请减少 ncol、缩短标签或放到面板下方"
+			)
+
+
+def assert_tight_within_canvas(fig) -> None:
+	"""`bbox="tight"` 的裁剪框不能比 figsize 宽。
+
+	比图宽的内容不会被裁掉，而是把裁剪框撑开，PDF 的 MediaBox 跟着变宽：图 4 的
+	两句 figure_note 曾把 7.0 in 的图输出成 9.32 in，再按 `\\textwidth` 放进正文
+	就等于连字号一起缩到 75%，比同页其他图小一号——单看图挑不出问题，排进双栏才看得出来。
+	"""
+	fig.canvas.draw()
+	tight = fig.get_tightbbox(fig.canvas.get_renderer())  # 英寸
+	# 0.05 in 余量：pad_inches 0.02 加上量测误差。
+	if tight.width > fig.get_figwidth() + 0.05:
+		raise RuntimeError(
+			f"裁剪框宽 {tight.width:.2f} in 超过 figsize 的 {fig.get_figwidth():.2f} in；"
+			"figure_note 或某个标签比图还宽，请折行或缩短"
+		)
+
+
 def save(fig, path_stem: Path, formats: list[str]) -> None:
+	assert_no_clipping(fig)
+	assert_no_overlapping_titles(fig)
+	assert_legends_inside_panels(fig)
+	assert_tight_within_canvas(fig)
 	for fmt in formats:
 		fig.savefig(path_stem.with_suffix(f".{fmt}"), format=fmt)
 	plt.close(fig)
+
+
+def text_extent_in_data(ax, text: str, fontsize: float) -> tuple[float, float]:
+	"""标签的真实渲染尺寸，换算成 ax 的数据坐标 (宽, 高)。
+
+	自动避让需要知道标签占多大地方。按字符数乘常数估算在比例字体下不可靠——宽字母
+	（O、W、m）会被低估，标签就会被判为放得下然后溢出边界。这里画一个临时 Text、
+	量它的窗口尺寸、再用逆变换换算回数据坐标，量完就删掉。
+
+	需要 renderer，所以调用前 figure 必须已经有 canvas（plt 创建的 figure 都有）。
+	"""
+	fig = ax.figure
+	renderer = fig.canvas.get_renderer()
+	probe = ax.text(0, 0, text, fontsize=fontsize)
+	bbox = probe.get_window_extent(renderer=renderer)
+	probe.remove()
+	inverse = ax.transData.inverted()
+	x0, y0 = inverse.transform((bbox.x0, bbox.y0))
+	x1, y1 = inverse.transform((bbox.x1, bbox.y1))
+	return abs(x1 - x0), abs(y1 - y0)
+
+
+def points_to_data(ax) -> tuple[float, float]:
+	"""1 pt 在 ax 数据坐标里有多长 (x, y)。
+
+	`annotate(textcoords="offset points")` 的偏移是排版点，碰撞检测却在数据坐标里做。
+	两边口径不统一时，盒子会算在实际落位以外几倍距离的地方——判定不重叠、画出来却叠着。
+	所以偏移量一律以点为单位声明，用这个换算成数据坐标后再拼盒子。
+	"""
+	px = ax.figure.dpi / 72.0
+	inverse = ax.transData.inverted()
+	x0, y0 = inverse.transform((0.0, 0.0))
+	x1, y1 = inverse.transform((px, px))
+	return abs(x1 - x0), abs(y1 - y0)
 
 
 # ------------------------------------------------------------------ figure 2
@@ -582,7 +793,7 @@ def save(fig, path_stem: Path, formats: list[str]) -> None:
 
 def draw_detection_taxonomy(path_stem: Path, formats: list[str], cells, macro) -> None:
 	fig, axes = plt.subplots(
-		1, 2, figsize=(FULL_WIDTH, 2.45), gridspec_kw={"width_ratios": [2.35, 1.0], "wspace": 0.30}
+		1, 2, figsize=(FULL_WIDTH, 2.15), gridspec_kw={"width_ratios": [2.35, 1.0], "wspace": 0.30}
 	)
 
 	ax = axes[0]
@@ -644,12 +855,21 @@ def draw_detection_taxonomy(path_stem: Path, formats: list[str], cells, macro) -
 				f"{value:.3f}", (value, y), textcoords="offset points",
 				xytext=(0, 6 if split_key == "id" else -11), ha="center", fontsize=6.0, color="#202124",
 			)
+		# 组标题贴左侧：x 用 axes 分数（0=左边框），不是数据值。原来传的是
+		# get_xlim()[0]（约 0.77），在 blended 变换里被当成 axes 分数用，
+		# 于是标题被推到最右边贴着边框，长的那行还被 x 轴范围裁到。
 		ax.text(
-			ax.get_xlim()[0], y + 0.30, title, fontsize=6.0, color=GREY,
+			0.02, y + 0.30, title, fontsize=6.0, color=GREY, ha="left",
 			transform=ax.get_yaxis_transform(),
 		)
 	ax.set_yticks([])
 	ax.set_ylim(-0.55, 1.62)
+	# 两个数值标签居中在各自标记下方/上方，最左的那个（0.773）会一半探出左边框；
+	# 左右各留一点余量。
+	values = [v for v in (macro.get(f"{s}_{k}") for s in ("id", "ood") for _, k in groups) if v is not None]
+	if values:
+		pad = max(0.35 * (max(values) - min(values)), 0.004)
+		ax.set_xlim(min(values) - pad, max(values) + pad)
 	ax.set_xlabel("macro AUROC over fault types")
 	handles = [
 		plt.Line2D([], [], marker="o", color=BLUE, markerfacecolor=BLUE, lw=0, markersize=4.0, label="in-distribution tasks"),
@@ -665,8 +885,11 @@ def draw_detection_taxonomy(path_stem: Path, formats: list[str], cells, macro) -
 
 
 def draw_safety_utility(path_stem: Path, formats: list[str], rows) -> None:
+	# 面板 (b) 要给六个点各放一条文字标签，标签宽度是固定的物理量：面板越窄，
+	# 同一条标签在数据坐标里就越长，即使贴着自己的点放也会横跨到别的点上方。
+	# 所以 (b) 拿走最多宽度，(a)/(c) 只需容纳 y 轴文字和短数字。
 	fig, axes = plt.subplots(
-		1, 3, figsize=(FULL_WIDTH, 2.35), gridspec_kw={"width_ratios": [1.25, 1.05, 0.80], "wspace": 0.58}
+		1, 3, figsize=(FULL_WIDTH, 2.15), gridspec_kw={"width_ratios": [1.05, 1.42, 0.72], "wspace": 0.52}
 	)
 	labels = [row[0] for row in rows]
 	ungated = np.array([row[1] for row in rows])
@@ -704,28 +927,77 @@ def draw_safety_utility(path_stem: Path, formats: list[str], rows) -> None:
 	# 这里按坐标贪心选放置方向：先试右上，撞了就换，保证互不重叠。
 	placed: list[tuple[float, float, float, float]] = []
 	xspan_ref = max(float(np.ptp(reduction)), 1e-3)
-	yspan_ref = max(float(np.ptp(retained)), 1e-3)
-	candidates = (
-		(4.5, 4.5, "bottom", "left"),
-		(4.5, -8.0, "top", "left"),
-		(-4.5, 4.5, "bottom", "right"),
-		(-4.5, -8.0, "top", "right"),
-		(4.5, 0.0, "center", "left"),
-		(-4.5, 0.0, "center", "right"),
+	# 坐标范围要先定下来：贪心放置除了避让彼此，还得知道边界在哪，否则最右侧的点
+	# 会把标签甩出画布，在双栏排版里溢到相邻栏上。
+	y_lo = min(0.94, float(np.min(retained)) - 0.01)
+	y_hi = max(1.0, float(np.max(retained)) + 0.01)
+	# 左右都要留出一个标签的宽度：最右那个点（OOD unseen）没有右侧余量时会被挤到
+	# 左边，而左边被 "validation floor 0.95" 那行占着，最后只能拉长引线横穿画面。
+	x_lo = float(np.min(reduction)) - 0.46 * xspan_ref
+	x_hi = float(np.max(reduction)) + 0.62 * xspan_ref
+	ax.set_xlim(x_lo, x_hi)
+	ax.set_ylim(y_lo, y_hi)
+	# 候选偏移一律用排版点：annotate 就按点偏移，碰撞盒也按点换算，两边同一口径。
+	# 之前碰撞盒按数据坐标比例（0.02*xspan）拼，比真实落位远好几倍，
+	# 于是「OOD clean / ID clean」被判为不重叠、画出来却叠成一团。
+	ptx, pty = points_to_data(ax)
+	BASE_OFFSETS = (
+		(5.0, 4.5, "bottom", "left"),
+		(5.0, -4.5, "top", "left"),
+		(-5.0, 4.5, "bottom", "right"),
+		(-5.0, -4.5, "top", "right"),
+		(6.5, 0.0, "center", "left"),
+		(-6.5, 0.0, "center", "right"),
 	)
+	# 候选顺序按「远离点云中心」排：固定用右上优先时，处在云左侧的点也往右上放，
+	# 标签就挤进云里、看着像在标注邻点。背向中心的方向天然是空的那一侧。
+	_cx = float(np.mean(reduction))
+	_cy = float(np.mean(retained))
+
+	def ranked_offsets(red: float, ret: float):
+		ox = 1.0 if red >= _cx else -1.0
+		oy = 1.0 if ret >= _cy else -1.0
+		return sorted(
+			BASE_OFFSETS,
+			key=lambda c: -((1.0 if c[0] > 0 else -1.0) * ox + (1.0 if c[1] > 0 else -1.0 if c[1] < 0 else 0.0) * oy),
+		)
+
+	def label_box(red: float, ret: float, w: float, h: float, dx: float, dy: float, va: str, ha: str):
+		x0 = red + dx * ptx if ha == "left" else red + dx * ptx - w
+		if va == "bottom":
+			y0 = ret + dy * pty
+		elif va == "top":
+			y0 = ret + dy * pty - h
+		else:
+			y0 = ret + dy * pty - 0.5 * h
+		return (x0, y0, x0 + w, y0 + h)
+	# "validation floor 0.95" 注记先占位：它不是数据标签，但落在 0.95 那条线附近，
+	# 不占位的话贪心放置会把恰好在 0.95 上的点标签叠上去。
+	_floor_w, _floor_h = text_extent_in_data(ax, "validation floor 0.95", fontsize=5.6)
+	# 注记原先贴在 0.95 线下方靠左，那一带正好是几个 clean 点的左侧空位，把它们逼进
+	# 点云中央。挪到右下角空白处：0.95 那条虚线横贯整幅，注记在哪一端都读得出对应关系。
+	_floor_right = x_hi - 0.02 * (x_hi - x_lo)
+	_floor_top = y_lo + 0.05 * (y_hi - y_lo)
+	placed.append((_floor_right - _floor_w, _floor_top - _floor_h, _floor_right, _floor_top))
+	# 六个数据点自身也要占位。只避让其他标签的话，标签会落在两个邻近标记之间，
+	# 看起来像在标注别的点——归属含糊比稍远一点更糟。标记半径 4.4 pt，留一点余量。
+	_mark_w = 4.0 * ptx
+	_mark_h = 4.0 * pty
+	for _red, _ret in zip(reduction, retained):
+		placed.append((_red - _mark_w, _ret - _mark_h, _red + _mark_w, _ret + _mark_h))
 	for label, red, ret, is_fault in zip(labels, reduction, retained, faulty):
 		if is_fault:
 			ax.plot(red, ret, "^", markersize=4.4, color=RED, linestyle="none", zorder=3)
 		else:
 			ax.plot(red, ret, "o", markersize=4.4, markerfacecolor="#ffffff", markeredgecolor=BLUE, markeredgewidth=0.8, linestyle="none", zorder=3)
-		# 标签占位按字符宽度估算成数据坐标下的矩形。
-		width = 0.075 * len(label) * xspan_ref
-		height = 0.09 * yspan_ref
-		chosen = candidates[0]
-		for dx, dy, va, ha in candidates:
-			x0 = red + 0.02 * xspan_ref if ha == "left" else red - 0.02 * xspan_ref - width
-			y0 = ret + (0.03 * yspan_ref if dy > 0 else -0.03 * yspan_ref - height if dy < 0 else -height / 2)
-			box = (x0, y0, x0 + width, y0 + height)
+		# 标签占位取真实渲染尺寸再换算成数据坐标。按字符数估宽会低估比例字体里的
+		# 宽字母，"OOD unseen" 就因此被判为放得下、结果溢出了右边界。
+		width, height = text_extent_in_data(ax, label, fontsize=5.8)
+		chosen = None
+		for dx, dy, va, ha in ranked_offsets(red, ret):
+			box = label_box(red, ret, width, height, dx, dy, va, ha)
+			if box[0] < x_lo or box[2] > x_hi or box[1] < y_lo or box[3] > y_hi:
+				continue
 			if all(
 				box[2] < other[0] or box[0] > other[2] or box[3] < other[1] or box[1] > other[3]
 				for other in placed
@@ -733,23 +1005,47 @@ def draw_safety_utility(path_stem: Path, formats: list[str], rows) -> None:
 				chosen = (dx, dy, va, ha)
 				placed.append(box)
 				break
-		else:
-			placed.append((red, ret, red + width, ret + height))
-		dx, dy, va, ha = chosen
-		ax.annotate(
-			label, (red, ret), textcoords="offset points", xytext=(dx, dy),
-			ha=ha, va=va, fontsize=5.8, color="#202124",
-		)
+		if chosen is not None:
+			ax.annotate(
+				label, (red, ret), textcoords="offset points", xytext=chosen[0:2],
+				ha=chosen[3], va=chosen[2], fontsize=5.8, color="#202124",
+			)
+			continue
+		# 贴身的六个位置都放不下：再往外推，并画一条细引线把标签和点连起来。
+		# 不带引线地随便找块空地会让标签看起来在标注邻近的点，归属含糊比多一条线更糟。
+		far_side = 1.0 if red < 0.5 * (x_lo + x_hi) else -1.0
+		for radius in (16.0, 22.0, 28.0):
+			for sx, sy in ((far_side, 1.0), (far_side, -1.0), (-far_side, 1.0), (-far_side, -1.0)):
+				dx, dy = sx * radius, sy * radius * 0.7
+				ha = "left" if dx > 0 else "right"
+				va = "bottom" if dy > 0 else "top"
+				box = label_box(red, ret, width, height, dx, dy, va, ha)
+				if box[0] < x_lo or box[2] > x_hi or box[1] < y_lo or box[3] > y_hi:
+					continue
+				if not all(
+					box[2] < other[0] or box[0] > other[2] or box[3] < other[1] or box[1] > other[3]
+					for other in placed
+				):
+					continue
+				placed.append(box)
+				ax.annotate(
+					label, (red, ret), textcoords="offset points", xytext=(dx, dy),
+					ha=ha, va=va, fontsize=5.8, color="#202124",
+					arrowprops={"arrowstyle": "-", "lw": 0.4, "color": GREY, "shrinkA": 1.0, "shrinkB": 2.5},
+				)
+				chosen = True
+				break
+			if chosen:
+				break
+		if not chosen:
+			# 连远处也排不开：说明数据点密到自动放置解决不了，直接报错而不是画出
+			# 一张标签叠在一起、读者会读错的图。
+			raise RuntimeError(f"panel (b) 找不到标签 {label!r} 的可行位置，请调整坐标范围或字号")
 	ax.axhline(0.95, color=GREY, lw=0.6, ls="--")
-	# 约束线注记贴在线下方，和落在 0.95 附近的点标签错开。
-	ax.text(0.02, 0.9485, "validation floor 0.95", transform=ax.get_yaxis_transform(), fontsize=5.6, color=GREY, va="top")
+	ax.text(0.98, _floor_top, "validation floor 0.95", transform=ax.get_yaxis_transform(), fontsize=5.6, color=GREY, va="top", ha="right")
 	ax.set_xlabel("wrong-direction reduction (pp)")
 	ax.set_ylabel("retained aligned torque")
-	lo = min(0.94, float(np.min(retained)) - 0.01)
-	ax.set_ylim(lo, max(1.0, float(np.max(retained)) + 0.01))
-	xspan = max(float(np.ptp(reduction)), 1e-3)
-	# 左右都留出标签空间：贪心放置可能把标签甩到点左侧。
-	ax.set_xlim(float(np.min(reduction)) - 0.42 * xspan, float(np.max(reduction)) + 0.42 * xspan)
+	# 坐标范围已在贪心放置之前设定，这里不要再改，否则边界避让就失效了。
 	# 角注放在图例一侧的空白处，避免和最低那个点的标签抢位置。
 	ax.text(0.98, 0.97, "up and right is better", transform=ax.transAxes, ha="right", va="top", fontsize=5.6, color=GREY)
 	handles = [
@@ -762,21 +1058,31 @@ def draw_safety_utility(path_stem: Path, formats: list[str], rows) -> None:
 	# (c) 平均门控值
 	ax = axes[2]
 	panel_tag(ax, "c", "Mean gate value")
-	ax.barh(y, gate, height=0.55, color=[RED if f else BLUE for f in faulty], alpha=0.85, linewidth=0)
-	gate_lo = min(0.94, float(np.min(gate)) - 0.008)
-	# 门控值越接近下界，条越短，标签放不进去就会压到 y 轴刻度上；
-	# 条内放不下时改成放在条右侧、用深色字。
-	inside_width = 0.30 * (1.0 - gate_lo)
-	for yi, value in zip(y, gate):
-		if value - gate_lo >= inside_width:
-			ax.annotate(f"{value:.3f}", (value, yi), textcoords="offset points", xytext=(-3, 0), ha="right", va="center", fontsize=5.8, color="#ffffff")
+	# 全部门控值都挤在 0.90–0.98，必须截断 x 轴才看得出差别。但截断轴上不能用柱：
+	# 柱长会不再与数值成比例（0.904 的柱看着只有 0.978 的四分之一）。所以画从
+	# g_t=1（无衰减）拉向实际值的棒线 + 端点标记——棒长直接读作衰减量，基准点又是
+	# 一个有物理意义的固定值，截断轴不会误导。标记形状沿用面板 b 的干净/故障编码。
+	gate_lo = min(0.94, float(np.min(gate)) - 0.012)
+	ax.hlines(y, gate, 1.0, color=[RED if f else BLUE for f in faulty], lw=1.3, alpha=0.55)
+	for yi, value, f in zip(y, gate, faulty):
+		if f:
+			ax.plot([value], [yi], marker="^", color=RED, markersize=4.0, lw=0)
 		else:
-			ax.annotate(f"{value:.3f}", (value, yi), textcoords="offset points", xytext=(3, 0), ha="left", va="center", fontsize=5.8, color="#202124")
+			ax.plot([value], [yi], marker="o", color=BLUE, markerfacecolor="#ffffff", markersize=4.0, lw=0)
+		# 标签放在标记右侧、棒线上方：放左侧时最短的两根（0.904/0.915）会压到 y 轴
+		# 刻度文字上。棒线本身够长，标签压不到右端的基准虚线。
+		ax.annotate(
+			f"{value:.3f}", (value, yi), textcoords="offset points", xytext=(5, 2.2),
+			ha="left", va="bottom", fontsize=5.8, color="#202124",
+		)
+	ax.axvline(1.0, color=GREY, lw=0.6, ls="--")
 	ax.set_yticks(y)
 	ax.set_yticklabels(labels)
-	ax.set_xlim(gate_lo, 1.0)
-	ax.set_xticks([round(gate_lo + 0.002, 3), round((gate_lo + 1.0) / 2, 3), 1.0])
-	ax.set_xlabel("mean gate $g_t$, active steps")
+	ax.set_xlim(gate_lo, 1.006)
+	ax.set_xticks([0.90, 0.95, 1.00])
+	# 标签必须比这个窄面板更短，否则 bbox=tight 会把尾字母裁掉（assert_no_clipping 会拦）。
+	# "over active steps" 的口径 caption 里已经写明，这里只留量名。
+	ax.set_xlabel("mean gate $g_t$")
 	ax.text(0.5, -0.30, "$g_t = 1$: no attenuation", transform=ax.transAxes, ha="center", fontsize=5.6, color=GREY)
 	recessive(ax, grid_axis="x")
 	save(fig, path_stem, formats)
@@ -785,14 +1091,53 @@ def draw_safety_utility(path_stem: Path, formats: list[str], rows) -> None:
 # ------------------------------------------------------------------ figure 4
 
 
+def draw_wrong_delta_panel(ax, stages, wrong_delta, wrong_sd) -> None:
+	"""每阶段门控前后的反向力矩变化（负号=更安全）。
+
+	前三阶段恒为 0：那些阶段选出的 deadband 落在 0.45–0.71、softness 固定 8.0，
+	门控从不闭合，所以再高的 AUROC 也不改变作动。零值柱画不出来，用一条贴零线的
+	文字标出来，否则面板看起来像缺数据。
+	"""
+	if wrong_delta is None or any(v is None for v in wrong_delta):
+		ax.set_axis_off()
+		ax.text(0.5, 0.5, "wrong-direction delta\nunavailable", transform=ax.transAxes,
+		        ha="center", va="center", fontsize=5.8, color=GREY)
+		return
+	values = np.array([float(v) for v in wrong_delta], dtype=float) * 100.0
+	sd = None if wrong_sd is None else np.array([float(v) for v in wrong_sd], dtype=float) * 100.0
+	for stage, value, color in zip(stages, values, STAGE_RAMP):
+		ax.bar(stage, value, width=0.62, color=color, linewidth=0)
+	if sd is not None:
+		ax.errorbar(stages, values, yerr=sd, fmt="none", ecolor="#202124", elinewidth=0.7, capsize=1.6, zorder=5)
+	ax.axhline(0.0, color=GREY, lw=0.6, zorder=4)
+	lo = float(np.min(values - (sd if sd is not None else 0.0)))
+	span = max(abs(lo), 0.1)
+	ax.set_ylim(lo - 0.22 * span, 0.42 * span)
+	zero = [int(s) for s, v in zip(stages, values) if abs(v) < 1e-9]
+	if zero:
+		ax.annotate(
+			"gate never closes", (float(np.mean(zero)), 0.0), textcoords="offset points",
+			xytext=(0, 3), ha="center", va="bottom", fontsize=5.4, color=GREY,
+		)
+	ax.annotate(
+		f"{values[-1]:+.2f}", (stages[-1], values[-1] - (sd[-1] if sd is not None else 0.0)),
+		textcoords="offset points", xytext=(0, -3), ha="center", va="top", fontsize=6.0,
+	)
+	ax.set_xticks(stages)
+	ax.set_xticklabels(stages)
+	ax.set_ylabel("wrong-direction change (pp)")
+	recessive(ax, grid_axis="y")
+
+
 def draw_ablation_summary(path_stem: Path, formats: list[str], ablation) -> None:
 	fig, axes = plt.subplots(
-		1, 3, figsize=(FULL_WIDTH, 2.45), gridspec_kw={"width_ratios": [1.60, 0.88, 0.88], "wspace": 0.42}
+		1, 4, figsize=(FULL_WIDTH, 2.05), gridspec_kw={"width_ratios": [1.42, 0.74, 0.86, 0.74], "wspace": 0.52}
 	)
 	stages = np.arange(1, 6)
 	auroc = np.array([v for v in ablation["auroc"]], dtype=float)
 	rmse = np.array([v for v in ablation["ood_rmse"]], dtype=float)
 	retained = ablation["retained"]
+	wrong_delta = ablation.get("wrong_delta")
 	# 三种子版本才有 *_sd；单种子扫描下这些键缺失，误差棒自动消失。
 	def sd_of(key: str) -> np.ndarray | None:
 		values = ablation.get(key)
@@ -800,6 +1145,7 @@ def draw_ablation_summary(path_stem: Path, formats: list[str], ablation) -> None
 			return None
 		return np.array([float(v) for v in values], dtype=float)
 	auroc_sd, rmse_sd, retained_sd = sd_of("auroc_sd"), sd_of("rmse_sd"), sd_of("retained_sd")
+	wrong_sd = sd_of("wrong_delta_sd")
 	n_seeds = max(ablation.get("n_seeds") or [1])
 
 	# (a) macro AUROC 与相邻差值
@@ -810,25 +1156,78 @@ def draw_ablation_summary(path_stem: Path, formats: list[str], ablation) -> None
 		ax.errorbar(stages, auroc, yerr=auroc_sd, fmt="none", ecolor=BLUE, elinewidth=0.7, capsize=1.8, zorder=2)
 	for stage, value, color in zip(stages, auroc, STAGE_RAMP):
 		ax.plot(stage, value, "o", markersize=5.0, color=color, markeredgecolor=BLUE, markeredgewidth=0.7, linestyle="none", zorder=3)
-	# 终点值放到点的右侧：末段差值标在线段中点下方，两者同处下方会叠字。
-	ax.annotate(
-		f"{auroc[-1]:.3f}", (stages[-1], auroc[-1]), textcoords="offset points",
-		xytext=(7, -2), ha="left", va="center", fontsize=6.0,
-	)
-	ax.set_xlim(0.6, 5.75)
-	for i in range(1, len(stages)):
-		delta = auroc[i] - auroc[i - 1]
-		ax.annotate(
-			f"{delta:+.3f}", ((stages[i] + stages[i - 1]) / 2, (auroc[i] + auroc[i - 1]) / 2),
-			textcoords="offset points", xytext=(0, 7 if delta >= 0 else -12), ha="center", fontsize=6.0, color="#202124",
-		)
+	# 加了面板 (d) 之后 (a) 变窄，五个两行阶段名（"+ recon-/struction" 最宽）横向挤在一起，
+	# "+ prob-/head" 和 "+ recon-" 直接连成一串。阶段序列在 caption 里已经写全，
+	# 四个面板统一只标序号；顺带省掉两行刻度标签的高度。
 	ax.set_xticks(stages)
-	ax.set_xticklabels([f"{s}\n{label}" for s, label in zip(stages, ABLATION_STAGE_LABELS)], fontsize=5.8)
+	ax.set_xticklabels(stages)
 	ax.set_ylabel("macro fused AUROC")
+	# 坐标范围先定，之后的标签避让要用到边界。
+	ax.set_xlim(0.6, 5.85)
 	pad = max(0.35 * float(np.ptp(auroc)), 0.01)
 	lo = float(np.min(auroc - (auroc_sd if auroc_sd is not None else 0)))
 	hi = float(np.max(auroc + (auroc_sd if auroc_sd is not None else 0)))
 	ax.set_ylim(lo - pad, hi + pad)
+	x_lo, x_hi = ax.get_xlim()
+	y_lo, y_hi = ax.get_ylim()
+	ptx, pty = points_to_data(ax)
+	taken: list[tuple[float, float, float, float]] = []
+
+	def reserve(cx: float, cy: float, w: float, h: float, dx: float, dy: float, ha: str, va: str):
+		x0 = cx + dx * ptx if ha == "left" else cx + dx * ptx - w if ha == "right" else cx + dx * ptx - 0.5 * w
+		y0 = cy + dy * pty if va == "bottom" else cy + dy * pty - h if va == "top" else cy + dy * pty - 0.5 * h
+		return (x0, y0, x0 + w, y0 + h)
+
+	def free(box) -> bool:
+		if box[0] < x_lo or box[2] > x_hi or box[1] < y_lo or box[3] > y_hi:
+			return False
+		return all(
+			box[2] < o[0] or box[0] > o[2] or box[3] < o[1] or box[1] > o[3] for o in taken
+		)
+
+	# 数据点先占位。标记和误差棒要分开算：把整根误差棒按标记宽度占位的话，第 1 阶段
+	# 那根 ±0.036 的长棒会封掉整列，差值标签（宽度接近一个阶段间距）就无处可放。
+	# 标记按半径 5 pt 的方框，棒身只占 cap 的宽度。
+	for stage, value in zip(stages, auroc):
+		taken.append((stage - 5.0 * ptx, value - 5.0 * pty, stage + 5.0 * ptx, value + 5.0 * pty))
+		if auroc_sd is not None:
+			sd = float(auroc_sd[int(stage) - 1])
+			taken.append((stage - 2.5 * ptx, value - sd - 2.0 * pty, stage + 2.5 * ptx, value + sd + 2.0 * pty))
+	# 终点值放到点的右侧：末段差值也在附近，两者同侧会叠字。
+	end_text = f"{auroc[-1]:.3f}"
+	end_w, end_h = text_extent_in_data(ax, end_text, fontsize=6.0)
+	taken.append(reserve(stages[-1], auroc[-1], end_w, end_h, 7.0, -2.0, "left", "center"))
+	ax.annotate(
+		end_text, (stages[-1], auroc[-1]), textcoords="offset points",
+		xytext=(7, -2), ha="left", va="center", fontsize=6.0,
+	)
+	# 相邻差值标在线段中点。固定「正数在上、负数在下」在末两段会撞上：那两段几乎水平、
+	# 中点又贴着终点值标签。改成沿垂直方向逐步找空位，撞了就再往外推。
+	for i in range(1, len(stages)):
+		delta = auroc[i] - auroc[i - 1]
+		mx = (stages[i] + stages[i - 1]) / 2
+		my = (auroc[i] + auroc[i - 1]) / 2
+		text = f"{delta:+.3f}"
+		width, height = text_extent_in_data(ax, text, fontsize=6.0)
+		first = 1.0 if delta >= 0 else -1.0
+		chosen = None
+		for sign in (first, -first):
+			for gap in (7.0, 12.0, 17.0, 23.0):
+				dy = sign * gap
+				va = "bottom" if dy > 0 else "top"
+				box = reserve(mx, my, width, height, 0.0, dy, "center", va)
+				if free(box):
+					taken.append(box)
+					chosen = (0.0, dy, "center", va)
+					break
+			if chosen:
+				break
+		if chosen is None:
+			raise RuntimeError(f"panel (a) 差值标签 {text!r} 找不到空位，请加宽面板或缩小字号")
+		ax.annotate(
+			text, (mx, my), textcoords="offset points", xytext=chosen[0:2],
+			ha=chosen[2], va=chosen[3], fontsize=6.0, color="#202124",
+		)
 	recessive(ax, grid_axis="y")
 
 	# (b) clean OOD RMSE
@@ -839,7 +1238,6 @@ def draw_ablation_summary(path_stem: Path, formats: list[str], ablation) -> None
 	if rmse_sd is not None:
 		ax.errorbar(stages, rmse, yerr=rmse_sd, fmt="none", ecolor="#202124", elinewidth=0.7, capsize=1.6, zorder=5)
 	ax.axhline(rmse[0], color=GREY, lw=0.6, ls="--", zorder=4)
-	ax.text(3.0, rmse[0] - 0.0015, "deterministic reference", ha="center", fontsize=5.6, color=GREY, va="top")
 	# 有误差棒时数值要抬到棒顶之上，否则压在 cap 上。
 	rmse_top = float(rmse[-1] + (rmse_sd[-1] if rmse_sd is not None else 0.0))
 	ax.annotate(f"{rmse[-1]:.4f}", (stages[-1], rmse_top), textcoords="offset points", xytext=(0, 3), ha="center", fontsize=6.0)
@@ -848,6 +1246,10 @@ def draw_ablation_summary(path_stem: Path, formats: list[str], ablation) -> None
 	ax.set_ylabel("clean OOD RMSE (Nm/kg)")
 	rmse_pad = rmse_sd if rmse_sd is not None else 0
 	ax.set_ylim(float(np.min(rmse - rmse_pad)) - 0.008, float(np.max(rmse + rmse_pad)) + 0.008)
+	# 参考线注记先是横排压柱体，改竖排放到右侧留白后又被 (d) 挤窄的面板里那个
+	# 0.2545 数值标签压上。面板只有 0.74 份宽度，容不下第五根柱子 + 一列竖排文字，
+	# 所以虚线的含义交给图注（figure_note）说，面板里只留线。
+	ax.set_xlim(0.45, 5.55)
 	recessive(ax, grid_axis="y")
 
 	# (c) retained aligned torque；阶段 1 无门控
@@ -874,15 +1276,20 @@ def draw_ablation_summary(path_stem: Path, formats: list[str], ablation) -> None
 	ax.set_ylabel("retained torque")
 	recessive(ax, grid_axis="y")
 
+	# (d) 门控带来的反向力矩变化。没有这一列，读者只能从 (a) 读出「阶段 2 的 AUROC 最高」，
+	# 而阶段 1–3 的门控在全部 60 行评测里 wrong_delta 精确为 0——检测再准也没有作动后果。
+	ax = axes[3]
+	panel_tag(ax, "d", "Safety effect")
+	draw_wrong_delta_panel(ax, stages, wrong_delta, wrong_sd)
+
 	seed_note = (
 		f"Mean over {n_seeds} training seeds with standard-deviation bars"
 		if n_seeds >= 3 else "Single attribution seed"
 	)
-	fig.text(
-		0.5, -0.06,
+	figure_note(
+		fig,
 		f"{seed_note}, identical split and training budget per stage; darker marks are later stages. "
-		"Panels b and c share the stage numbering of panel a.",
-		ha="center", fontsize=5.6, color=GREY,
+		"Panels b--d reuse the stage numbering of panel a; the dashed line in b is the stage-1 deterministic level.",
 	)
 	save(fig, path_stem, formats)
 
@@ -891,7 +1298,7 @@ def draw_ablation_summary(path_stem: Path, formats: list[str], ablation) -> None
 
 
 def draw_stress_transfer(path_stem: Path, formats: list[str], stress, loso_rows) -> None:
-	fig, axes = plt.subplots(2, 1, figsize=(COL_WIDTH, 3.45), gridspec_kw={"height_ratios": [1.12, 0.88], "hspace": 0.85})
+	fig, axes = plt.subplots(2, 1, figsize=(COL_WIDTH, 3.05), gridspec_kw={"height_ratios": [1.12, 0.88], "hspace": 0.78})
 
 	# (a) 最高强度点：AUROC 与保留比例共轴
 	ax = axes[0]
@@ -904,7 +1311,9 @@ def draw_stress_transfer(path_stem: Path, formats: list[str], stress, loso_rows)
 		if group != last_group:
 			if last_group is not None:
 				y -= 0.55
-			ax.text(-0.02, y + 0.55, group, transform=ax.get_yaxis_transform(), fontsize=6.0, color=GREY, ha="left")
+			# x 是 axes 分数：-0.02 会让组标题跨过左边框、压在 y 轴刻度文字和第一条网格线上。
+			# 挪到边框内 0.02，和图 2(b) 的组标题一致。
+			ax.text(0.02, y + 0.55, group, transform=ax.get_yaxis_transform(), fontsize=6.0, color=GREY, ha="left")
 			last_group = group
 		positions.append(y)
 		labels.append(split)
@@ -963,7 +1372,12 @@ def draw_stress_transfer(path_stem: Path, formats: list[str], stress, loso_rows)
 	ax.set_xlabel("wrong-direction reduction (pp)")
 	span = max(float(effects.max()), hi_pp)
 	ax.set_xlim(-0.06 * span, span * 1.12)
-	ax.legend(loc="lower center", bbox_to_anchor=(0.5, -0.62), frameon=False, ncol=2, handlelength=1.0)
+	# 两条图例并排时比这个单栏面板宽 39 px，右端 "CI" 越出边框。缩到 5.4 pt 后
+	# 宽 684 px，留得下余量；标签文案照旧，n 和置信水平都还写在图里。
+	ax.legend(
+		loc="lower center", bbox_to_anchor=(0.5, -0.62), frameon=False, ncol=2,
+		handlelength=1.0, columnspacing=0.8, fontsize=5.4,
+	)
 	recessive(ax, grid_axis="x")
 	save(fig, path_stem, formats)
 
