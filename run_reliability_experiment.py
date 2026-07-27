@@ -25,7 +25,11 @@ from torch.utils.data import DataLoader, Subset
 from reliability.closed_loop import closed_loop_metrics
 from reliability.faults import apply_fault, canonical_fault_name, fault_classes_from_names, parse_fault_spec
 from reliability.features import feature_groups, input_names_for_profile, joint_velocity_indices, label_names, participant_masses
-from reliability.gate_selection import gate_selection_score
+from reliability.gate_selection import (
+	evaluate_clean_constraints,
+	gate_selection_score,
+	x_opp_selection_score,
+)
 from reliability.metrics import (
 	binary_auroc,
 	calibrate_risk,
@@ -104,8 +108,9 @@ def parse_args() -> argparse.Namespace:
 	parser.add_argument("--no-forecast-detach", dest="forecast_detach", action="store_false",
 		help="Let forecast gradients flow into the trunk (round-2 behaviour; tends to cost ~0.01-0.02 clean RMSE).")
 	parser.add_argument("--training-mode", default="prob_aug_recon_fc",
-		choices=["det_noaug", "det_aug", "prob_aug", "prob_aug_recon", "prob_aug_recon_fc"],
-		help="Attribution ablation: deterministic/probabilistic x with/without fault augmentation, reconstruction head, and forecast head.")
+		help="Attribution ablation. Ordered stages: det_noaug, det_aug, prob_aug, prob_aug_recon, prob_aug_recon_fc. "
+			"Leave-one-out grid also accepts composed names {det|prob}_{noaug|aug}[_recon][_fc][_nofault]; "
+			"see mode_flags() for the semantics of _nofault.")
 	parser.add_argument("--mc-samples", type=int, default=0, help="MC-dropout samples at eval for epistemic uncertainty. 0 disables.")
 	parser.add_argument("--ensemble-checkpoints", default="", help="CSV of extra checkpoints to average for a deep ensemble at eval.")
 	parser.add_argument("--training-faults", default="clean,insole_missing,encoder_dropout,imu_bias,packet_loss,stuck_imu,sensor_delay")
@@ -133,6 +138,35 @@ def parse_args() -> argparse.Namespace:
 	parser.add_argument("--gate-max-deadband", type=float, default=2.0,
 		help="Upper bound for validation-derived deadband. Prevents OOD clean calibration from disabling the gate.")
 	parser.add_argument("--gate-softness-grid", default="")
+	# --- EXPERIMENTS_TODO §1：按 X_opp 选工作点 + rate-limit 网格 ---
+	parser.add_argument("--gate-selection-objective", default="x_opp", choices=["x_opp", "legacy_wrong_v2"],
+		help="Validation objective. 'x_opp' (default) maximizes the relative drop in the "
+			"opposition-weighted torque-product integral on validation faults under six clean-side "
+			"constraints. 'legacy_wrong_v2' reproduces archived operating points and must not be used "
+			"for new claims: its safety term is a wrong-direction fraction, which a nonnegative gate "
+			"cannot increase, so the constraint is vacuous.")
+	parser.add_argument("--gate-max-fall-grid", default="",
+		help="Comma-separated --gate-max-fall-per-step candidates swept on val. Include 0 for the "
+			"unlimited (original) gate. Empty keeps only --gate-max-fall-per-step.")
+	parser.add_argument("--gate-max-rise-grid", default="",
+		help="Comma-separated --gate-max-rise-per-step candidates swept on val. Include 0 for the "
+			"unlimited (original) gate. Empty keeps only --gate-max-rise-per-step.")
+	parser.add_argument("--gate-deadband-grid", default="",
+		help="Optional explicit deadband candidates. Empty uses the single OOD-quantile-derived deadband.")
+	# 六项 clean-side 约束的阈值。四项相对 ungated，两项绝对（ungated 的 P(g=0) 恒为 0，比值无定义）。
+	parser.add_argument("--gate-clean-overlap-floor", type=float, default=0.95,
+		help="Minimum val/clean capped-overlap retention as a fraction of the ungated model.")
+	parser.add_argument("--gate-clean-rmse-ceiling", type=float, default=1.05,
+		help="Maximum val/clean torque tracking RMSE as a multiple of the ungated model.")
+	parser.add_argument("--gate-clean-max-full-shutdown", type=float, default=0.02,
+		help="Maximum val/clean P(g=0). Absolute, since the ungated baseline is exactly 0.")
+	parser.add_argument("--gate-clean-torque-rate-ceiling", type=float, default=1.10,
+		help="Maximum val/clean mean absolute torque rate as a multiple of the ungated model.")
+	parser.add_argument("--gate-clean-max-shutdowns-per-minute", type=float, default=6.0,
+		help="Maximum val/clean false shutdown episodes per minute. Absolute, as above.")
+	parser.add_argument("--gate-torque-rate-weight", type=float, default=0.5,
+		help="Selection penalty weight on clean torque-rate inflation, so a gate that lowers X_opp by "
+			"chattering is not scored as a pure win.")
 	parser.add_argument("--gate-sweep-scenarios", default="test_id/clean,test_ood/clean,test_id/insole_missing,test_id/encoder_dropout,test_id/sensor_delay,test_ood/insole_missing,test_ood/encoder_dropout,test_ood/sensor_delay")
 	parser.add_argument("--stats-batches", type=int, default=24)
 	parser.add_argument("--max-eval-batches", type=int, default=0)
@@ -295,15 +329,50 @@ def resolve_split(records, args):
 	return participant_split(records, args.val_count, args.test_count)
 
 
+_LEGACY_MODE_FLAGS = {
+	"det_noaug": {"probabilistic": False, "augment": False, "use_recon": False, "use_forecast": False},
+	"det_aug": {"probabilistic": False, "augment": True, "use_recon": False, "use_forecast": False},
+	"prob_aug": {"probabilistic": True, "augment": True, "use_recon": False, "use_forecast": False},
+	"prob_aug_recon": {"probabilistic": True, "augment": True, "use_recon": True, "use_forecast": False},
+	"prob_aug_recon_fc": {"probabilistic": True, "augment": True, "use_recon": True, "use_forecast": True},
+}
+
+
 def mode_flags(training_mode: str) -> dict:
-	"""把 training-mode 字符串展开成 (probabilistic, augment, use_recon, use_forecast) 开关。"""
+	"""把 training-mode 字符串展开成 (probabilistic, augment, use_recon, use_forecast, fault_loss) 开关。
+
+	五个历史名字（det_noaug … prob_aug_recon_fc）的展开结果与旧字典逐位相同，归档结果可复算。
+	为 leave-one-component-out 消融额外接受组合式命名：
+
+	    {det|prob}_{noaug|aug}[_recon][_fc][_nofault]
+
+	`_nofault` 只关掉 fault-head 的监督损失（结构仍在，但不训练），用来做「minus fault head」
+	这一格——训练时仍然注入故障，所以 recon/forecast 头见到的输入分布与 full model 一致，
+	差异被限制在被移除的那一个组件上。该格在评估侧还必须把 fault/logit 通道从门控候选池里
+	去掉，否则门控会读一个随机初始化的头。
+	"""
+	if training_mode in _LEGACY_MODE_FLAGS:
+		flags = dict(_LEGACY_MODE_FLAGS[training_mode])
+		flags["fault_loss"] = flags["augment"]
+		return flags
+	tokens = training_mode.split("_")
+	if len(tokens) < 2 or tokens[0] not in ("det", "prob") or tokens[1] not in ("noaug", "aug"):
+		raise ValueError(
+			f"Unknown training mode '{training_mode}'. Expected one of {sorted(_LEGACY_MODE_FLAGS)} "
+			"or a composed name {det|prob}_{noaug|aug}[_recon][_fc][_nofault]."
+		)
+	rest = tokens[2:]
+	unknown = [token for token in rest if token not in ("recon", "fc", "nofault")]
+	if unknown or len(set(rest)) != len(rest):
+		raise ValueError(f"Unknown or repeated training-mode component(s) in '{training_mode}': {unknown or rest}")
+	augment = tokens[1] == "aug"
 	return {
-		"det_noaug": {"probabilistic": False, "augment": False, "use_recon": False, "use_forecast": False},
-		"det_aug": {"probabilistic": False, "augment": True, "use_recon": False, "use_forecast": False},
-		"prob_aug": {"probabilistic": True, "augment": True, "use_recon": False, "use_forecast": False},
-		"prob_aug_recon": {"probabilistic": True, "augment": True, "use_recon": True, "use_forecast": False},
-		"prob_aug_recon_fc": {"probabilistic": True, "augment": True, "use_recon": True, "use_forecast": True},
-	}[training_mode]
+		"probabilistic": tokens[0] == "prob",
+		"augment": augment,
+		"use_recon": "recon" in rest,
+		"use_forecast": "fc" in rest,
+		"fault_loss": augment and "nofault" not in rest,
+	}
 
 
 def sample_training_fault_name(nonclean_faults: List[str], clean_probability: float) -> str:
@@ -426,7 +495,9 @@ def train(
 				else:
 					estimate_loss = masked_mse(out["mean"], y, mask)
 				loss = estimate_loss
-				if flags["augment"]:
+				# flags["fault_loss"] 与 flags["augment"] 只在 leave-one-out 的 `_nofault` 格上分开：
+				# 那一格照常注入故障（recon/forecast 头见到的输入分布不变），只是不训练 fault head。
+				if flags["fault_loss"]:
 					fault_logits = out.get("fault_logits", out["fault_logit"])
 					fault_targets = multihead_fault_target(
 						fault_target,
@@ -698,6 +769,252 @@ def estimate_risk_refs(
 	return refs
 
 
+def domain_shift_deadband(
+	model: ReliabilityTCN,
+	datasets: Dict[str, ParsedWindowDataset],
+	groups: Dict[str, List[int]],
+	args: argparse.Namespace,
+	device: torch.device,
+	risk_refs: Optional[Dict[str, float]],
+) -> float:
+	"""OOD 域移 deadband：用 val_ood(验证被试×heldout 任务) clean 风险分位设带宽。
+
+	域移会同时抬高残差和不确定性，若 deadband 只按 ID-clean 标定，门控会在 OOD-clean 上
+	误伤。这里把名义阈值抬到能吸收域移的位置，真故障（风险更高）仍越过带宽被抑制。
+	"""
+	deadband = args.gate_deadband
+	if getattr(args, "ood_deadband_quantile", 0.0) <= 0.0 or "val_ood" not in datasets:
+		return deadband
+	ood_out = collect_reliability_outputs(model, datasets["val_ood"], groups, args, device, "clean")
+	if ood_out is None:
+		return deadband
+	ood_risk = risk_from_outputs(ood_out, risk_refs)
+	ood_tm = ood_out["mask"].any(dim=1, keepdim=True)
+	if not ood_tm.any():
+		return deadband
+	q = float(torch.quantile(ood_risk[ood_tm], args.ood_deadband_quantile))
+	deadband = max(args.gate_deadband, q - 1.0)
+	if args.gate_max_deadband > 0:
+		deadband = min(deadband, args.gate_max_deadband)
+	return deadband
+
+
+def select_gate_on_val_x_opp(
+	model: ReliabilityTCN,
+	datasets: Dict[str, ParsedWindowDataset],
+	groups: Dict[str, List[int]],
+	args: argparse.Namespace,
+	device: torch.device,
+	uncertainty_ref: float,
+	risk_refs: Optional[Dict[str, float]],
+	softness_grid: List[float],
+) -> tuple[float, float, Dict[str, object]]:
+	"""EXPERIMENTS_TODO §1：以验证故障上的 $X_{\\mathrm{opp}}$ 为主目标选门控工作点。
+
+	与旧选择器的三点区别：
+
+	1. 主目标换成 $X_{\\mathrm{opp}}$ 的相对下降（幅值敏感），wrong-direction fraction 退成诊断量；
+	2. clean 侧六项硬约束（retention / capped overlap / tracking RMSE / $P(g{=}0)$ /
+	   torque rate / false shutdowns per minute），全部在 val 上判定；
+	3. 网格扩到 softness × deadband × max-fall × max-rise，把 rate limit 纳入选择而不是外部固定。
+
+	测试集完全不参与：所有量都来自 `datasets["val"]`（及 `val_ood` 的 clean 分位）。
+	返回的 info 里带完整候选表，便于在论文里报告工作点是怎么被选出来的。
+	"""
+	deadband_base = domain_shift_deadband(model, datasets, groups, args, device, risk_refs)
+	deadband_grid = _parse_floats(getattr(args, "gate_deadband_grid", "")) or [deadband_base]
+	fall_grid = _parse_floats(getattr(args, "gate_max_fall_grid", "")) or [args.gate_max_fall_per_step]
+	rise_grid = _parse_floats(getattr(args, "gate_max_rise_grid", "")) or [args.gate_max_rise_per_step]
+
+	outputs = collect_reliability_outputs(model, datasets["val"], groups, args, device, "clean")
+	if outputs is None:
+		return args.gate_softness, deadband_base, {"policy_source": "fixed_cli_no_val_outputs"}
+	clean_risk = risk_from_outputs(outputs, risk_refs)
+	# ungated 参考：softness/deadband 取极大 => gate 恒为 1，且不施加 rate limit。
+	clean_ungated = gate_metrics_for_outputs(outputs, clean_risk, uncertainty_ref, softness=1e6, deadband=1e6)
+
+	fault_cases = []
+	for fault_name in _parse_csv(args.gate_validation_faults):
+		if fault_name == "clean":
+			continue
+		fault_outputs = collect_reliability_outputs(model, datasets["val"], groups, args, device, fault_name)
+		if fault_outputs is None:
+			continue
+		fault_risk = risk_from_outputs(fault_outputs, risk_refs)
+		fault_ungated = gate_metrics_for_outputs(
+			fault_outputs, fault_risk, uncertainty_ref, softness=1e6, deadband=1e6
+		)
+		fault_cases.append(
+			{
+				"name": fault_name,
+				"outputs": fault_outputs,
+				"risk": fault_risk,
+				"ungated_x_opp": fault_ungated.get("gated_wrong_torque_product_integral", 0.0),
+				"ungated_retained": fault_ungated.get("gated_retained_aligned_torque", 0.0),
+				"ungated_wrong": fault_ungated.get("gated_wrong_direction_ratio", float("nan")),
+			}
+		)
+
+	best_score = -math.inf
+	best = (args.gate_softness, deadband_base, args.gate_max_fall_per_step, args.gate_max_rise_per_step)
+	best_info: Dict[str, object] = {
+		"policy_source": "val_x_opp_constrained",
+		"selection_objective": "x_opp",
+		"constraints_met": False,
+	}
+	candidates: List[Dict[str, object]] = []
+	for softness in softness_grid:
+		for deadband in deadband_grid:
+			for max_fall in fall_grid:
+				for max_rise in rise_grid:
+					record = _score_gate_candidate(
+						outputs=outputs,
+						clean_risk=clean_risk,
+						clean_ungated=clean_ungated,
+						fault_cases=fault_cases,
+						uncertainty_ref=uncertainty_ref,
+						args=args,
+						softness=softness,
+						deadband=deadband,
+						max_fall=max_fall,
+						max_rise=max_rise,
+					)
+					candidates.append(record)
+					if record["selection_score"] > best_score:
+						best_score = float(record["selection_score"])
+						best = (softness, deadband, max_fall, max_rise)
+						best_info = dict(record)
+	best_info.update(
+		{
+			"policy_source": "val_x_opp_constrained",
+			"selection_objective": "x_opp",
+			"selected_gate_softness": best[0],
+			"selected_gate_deadband": best[1],
+			"selected_gate_max_fall_per_step": best[2],
+			"selected_gate_max_rise_per_step": best[3],
+			"ood_deadband_base": deadband_base,
+			"validation_faults": ",".join(case["name"] for case in fault_cases),
+			"n_candidates": len(candidates),
+			"candidates": candidates,
+		}
+	)
+	if not best_info.get("constraints_met", False):
+		# 没有可行点时仍返回最优候选，但把状态写进报告，让汇总脚本能把该 run 标红。
+		best_info["selection_warning"] = (
+			"no candidate satisfied all six clean-side constraints; reported point is the least-violating one"
+		)
+	# 选出的 rate limit 要回写到 args，测试集评估才会用同一工作点。
+	args.gate_max_fall_per_step = best[2]
+	args.gate_max_rise_per_step = best[3]
+	return best[0], best[1], best_info
+
+
+def _score_gate_candidate(
+	outputs: Dict[str, torch.Tensor],
+	clean_risk: torch.Tensor,
+	clean_ungated: Dict[str, float],
+	fault_cases: List[Dict[str, object]],
+	uncertainty_ref: float,
+	args: argparse.Namespace,
+	softness: float,
+	deadband: float,
+	max_fall: float,
+	max_rise: float,
+) -> Dict[str, object]:
+	"""在 val 上评一个候选工作点，返回 §1.1 要求的全部字段。"""
+	clean = gate_metrics_for_outputs(
+		outputs, clean_risk, uncertainty_ref, softness=softness, deadband=deadband,
+		max_fall_per_step=max_fall, max_rise_per_step=max_rise,
+	)
+	constraints_met, checks, limits = evaluate_clean_constraints(
+		clean,
+		clean_ungated,
+		retained_floor_ratio=args.gate_clean_retained_floor,
+		overlap_floor_ratio=args.gate_clean_overlap_floor,
+		rmse_ceiling_ratio=args.gate_clean_rmse_ceiling,
+		max_full_shutdown_fraction=args.gate_clean_max_full_shutdown,
+		torque_rate_ceiling_ratio=args.gate_clean_torque_rate_ceiling,
+		max_shutdowns_per_minute=args.gate_clean_max_shutdowns_per_minute,
+	)
+	ungated_retained = clean_ungated.get("gated_retained_aligned_torque", 0.0) or 0.0
+	ungated_rate = clean_ungated.get("gated_mean_abs_torque_rate", float("nan"))
+	clean_retained_ratio = _safe_ratio(clean.get("gated_retained_aligned_torque"), ungated_retained)
+	clean_rate_ratio = _safe_ratio(clean.get("gated_mean_abs_torque_rate"), ungated_rate, default=1.0)
+
+	x_opp_reductions: List[float] = []
+	retained_ratios: List[float] = []
+	per_fault: Dict[str, Dict[str, float]] = {}
+	for case in fault_cases:
+		metrics = gate_metrics_for_outputs(
+			case["outputs"], case["risk"], uncertainty_ref, softness=softness, deadband=deadband,
+			max_fall_per_step=max_fall, max_rise_per_step=max_rise,
+		)
+		x_opp = metrics.get("gated_wrong_torque_product_integral")
+		retained = metrics.get("gated_retained_aligned_torque")
+		if x_opp is None or retained is None:
+			continue
+		ungated_x_opp = float(case["ungated_x_opp"] or 0.0)
+		# ungated 已经没有反向暴露时，这一格对目标没有信息量，记 0 而不是 1，避免
+		# 「本来就没危险」的故障把平均降幅刷满。
+		reduction = min(max(ungated_x_opp - x_opp, 0.0) / ungated_x_opp, 1.0) if ungated_x_opp > 1e-12 else 0.0
+		x_opp_reductions.append(reduction)
+		retained_ratios.append(_safe_ratio(retained, case["ungated_retained"]))
+		per_fault[str(case["name"])] = {
+			"x_opp": x_opp,
+			"ungated_x_opp": ungated_x_opp,
+			"x_opp_reduction_ratio": reduction,
+			"retained_ratio": retained_ratios[-1],
+			"wrong_direction_ratio": metrics.get("gated_wrong_direction_ratio", float("nan")),
+			"shutdowns_per_minute": metrics.get("shutdowns_per_minute", float("nan")),
+		}
+	mean_reduction = sum(x_opp_reductions) / len(x_opp_reductions) if x_opp_reductions else 0.0
+	mean_retained_ratio = sum(retained_ratios) / len(retained_ratios) if retained_ratios else 0.0
+	score = x_opp_selection_score(
+		fault_x_opp_reduction_ratio=mean_reduction,
+		clean_retained_ratio=clean_retained_ratio,
+		clean_torque_rate_ratio=clean_rate_ratio,
+		fault_retained_weight=args.gate_fault_retained_weight,
+		mean_fault_retained_ratio=mean_retained_ratio,
+		torque_rate_weight=args.gate_torque_rate_weight,
+		constraints_met=constraints_met,
+	)
+	return {
+		"selection_score": score,
+		"constraints_met": constraints_met,
+		"gate_softness": softness,
+		"gate_deadband": deadband,
+		"gate_max_fall_per_step": max_fall,
+		"gate_max_rise_per_step": max_rise,
+		# §1.1 点名要求的 val_* 字段。
+		"val_clean_x_opp": clean.get("gated_wrong_torque_product_integral", float("nan")),
+		"val_fault_x_opp": sum(v["x_opp"] for v in per_fault.values()) / max(len(per_fault), 1),
+		"val_clean_tracking_rmse": clean.get("gated_tracking_rmse", float("nan")),
+		"val_clean_capped_overlap_retention": clean.get("gated_capped_overlap", float("nan")),
+		"val_clean_full_shutdown_fraction": clean.get("full_shutdown_fraction", float("nan")),
+		"val_clean_shutdowns_per_minute": clean.get("shutdowns_per_minute", float("nan")),
+		"val_clean_mean_abs_torque_rate": clean.get("gated_mean_abs_torque_rate", float("nan")),
+		"val_clean_aligned_retention": clean.get("gated_retained_aligned_torque", float("nan")),
+		"val_clean_retained_ratio": clean_retained_ratio,
+		"val_clean_torque_rate_ratio": clean_rate_ratio,
+		"val_clean_mean_shutdown_duration_ms": clean.get("mean_shutdown_duration_ms", float("nan")),
+		"val_clean_gate_transitions_per_minute": clean.get("gate_transitions_per_minute", float("nan")),
+		# wrong-direction fraction 只作诊断，不参与目标或约束。
+		"val_clean_wrong_direction_ratio_diagnostic": clean.get("gated_wrong_direction_ratio", float("nan")),
+		"mean_fault_x_opp_reduction_ratio": mean_reduction,
+		"mean_fault_retained_ratio": mean_retained_ratio,
+		"clean_constraint_checks": checks,
+		"clean_constraint_limits": limits,
+		"per_fault": per_fault,
+	}
+
+
+def _safe_ratio(value: Optional[float], base: Optional[float], default: float = 0.0) -> float:
+	"""value/base，缺失或分母退化时回落到 default（不静默当成 1.0）。"""
+	if value is None or base is None or value != value or base != base or abs(base) < 1e-12:
+		return default
+	return value / base
+
+
 def select_gate_on_val(
 	model: ReliabilityTCN,
 	datasets: Dict[str, ParsedWindowDataset],
@@ -719,6 +1036,10 @@ def select_gate_on_val(
 	if not args.select_gate_on_val or "val" not in datasets:
 		return args.gate_softness, args.gate_deadband, {"policy_source": "fixed_cli"}
 	grid = _parse_floats(args.gate_softness_grid) or [0.25, 0.5, 1.0, 2.0]
+	if getattr(args, "gate_selection_objective", "legacy_wrong_v2") == "x_opp":
+		return select_gate_on_val_x_opp(
+			model, datasets, groups, args, device, uncertainty_ref, risk_refs, grid
+		)
 	# 域移 deadband：用 val_ood 的 clean 融合风险分位（threshold = 1 + deadband）。
 	deadband = args.gate_deadband
 	if getattr(args, "ood_deadband_quantile", 0.0) > 0.0 and "val_ood" in datasets:
@@ -1018,6 +1339,8 @@ def evaluate_dataset(
 		risk_refs=risk_refs,
 		gate_deadband=gate_deadband if gate_deadband is not None else args.gate_deadband,
 		velocity_indices=getattr(args, "velocity_indices", []),
+		gate_max_fall_per_step=getattr(args, "gate_max_fall_per_step", 0.0),
+		gate_max_rise_per_step=getattr(args, "gate_max_rise_per_step", 0.0),
 	)
 
 
@@ -1107,6 +1430,8 @@ def reliability_metrics_from_outputs(
 	risk_refs: Optional[Dict[str, float]] = None,
 	gate_deadband: float = 0.0,
 	velocity_indices: Optional[List[int]] = None,
+	gate_max_fall_per_step: float = 0.0,
+	gate_max_rise_per_step: float = 0.0,
 ) -> Dict[str, float]:
 	mean = outputs["mean"]
 	logvar = outputs["logvar"]
@@ -1149,8 +1474,8 @@ def reliability_metrics_from_outputs(
 			gate_softness=gate_softness,
 			risk=risk if risk_refs is not None else None,
 			deadband=gate_deadband,
-			gate_max_fall_per_step=args.gate_max_fall_per_step,
-			gate_max_rise_per_step=args.gate_max_rise_per_step,
+			gate_max_fall_per_step=gate_max_fall_per_step,
+			gate_max_rise_per_step=gate_max_rise_per_step,
 		)
 	)
 	# 轻量动力学在环代理收益（门控后的指令施加到真实生物力矩上）。
@@ -1160,8 +1485,8 @@ def reliability_metrics_from_outputs(
 		gate = reliability_gate(risk, softness=gate_softness, deadband=gate_deadband)
 		gate = causal_gate_rate_limit(
 			gate,
-			max_fall_per_step=args.gate_max_fall_per_step,
-			max_rise_per_step=args.gate_max_rise_per_step,
+			max_fall_per_step=gate_max_fall_per_step,
+			max_rise_per_step=gate_max_rise_per_step,
 		)
 		command = moment_to_torque(mean) * gate
 		metrics.update(

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Dict, Iterable, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -228,6 +228,41 @@ def calibrate_risk(
 	return risk
 
 
+#: `calibrate_risk` 里每路信号的默认参考值（refs 缺失时用）。fault 是概率，名义阈值
+#: 0.5；其余通道都已按 val 分位归一，参考值 1.0。
+DEFAULT_RISK_REFS: Dict[str, float] = {
+	"fault": 0.5,
+	"aleatoric": 1.0,
+	"residual": 1.0,
+	"epistemic": 1.0,
+	"forecast": 1.0,
+	"staleness": 1.0,
+	"drift": 1.0,
+}
+
+
+def risk_from_channels(
+	channels: Dict[str, torch.Tensor],
+	refs: Optional[Dict[str, float]] = None,
+) -> torch.Tensor:
+	"""任意通道子集的标定风险 $\\max_k s_k / r_k$（EXPERIMENTS_TODO §2 的单通道门控）。
+
+	`calibrate_risk` 永远包含 fault 与 aleatoric 两路，所以没法用来构造「只用重构残差」
+	或「只用 staleness」这类单通道门控。这里接受显式的通道字典，融合规则与
+	`calibrate_risk` 完全一致（同样的 refs、同样的关节维求均值、同样取最大值），
+	区别只在候选集——这正是消融要隔离的变量。
+	"""
+	if not channels:
+		raise ValueError("risk_from_channels needs at least one channel")
+	refs = refs or {}
+	risk: Optional[torch.Tensor] = None
+	for name, value in channels.items():
+		ref = refs.get(name, DEFAULT_RISK_REFS.get(name, 1.0))
+		scaled = _reduce_joint(value) / max(ref, 1e-6)
+		risk = scaled if risk is None else torch.maximum(risk, scaled)
+	return risk
+
+
 def _reduce_joint(value: torch.Tensor) -> torch.Tensor:
 	"""把可能的多关节信号 [B,J,T] 在关节维取均值成 [B,1,T]。"""
 	if value.dim() >= 2 and value.shape[1] > 1:
@@ -407,6 +442,90 @@ def causal_gate_rate_limit(
 	return out
 
 
+def gate_dynamics_metrics(
+	gate: torch.Tensor,
+	valid_time: torch.Tensor,
+	sample_rate: float = 200.0,
+	prefix: str = "",
+	zero_tol: float = 1e-6,
+) -> Dict[str, float]:
+	"""关闭事件的时间结构：频率、持续时长分布与开关抖动。
+
+	平均门控值无法区分「一次 200 ms 的关闭」和「二十次 10 ms 的抖动」，但佩戴者感受到的
+	是后者。这里把 gate 序列切成 episode 来度量：
+
+	- shutdown episode：`g <= zero_tol` 的极大连续段（完全断力矩）；
+	- attenuation episode：`g < 0.5` 的极大连续段（力矩被砍半以上）；
+	- transition：跨过 0.5 的次数，作为 alarm chatter 的代理量。
+
+	每个窗口独立计段。跨窗口边界的 episode 会被截断，因此这里的持续时长是**窗口内**
+	时长的下界；窗口 768 sample @200 Hz = 3.84 s，远长于关心的 25–500 ms 故障尺度，
+	截断只影响极少数贴边事件。频率类指标（per-minute）不受截断影响，因为分母用的是
+	同一批有效样本的总时长。
+	"""
+	if gate.dim() == 3 and gate.shape[1] > 1:
+		gate = gate.mean(dim=1, keepdim=True)
+	if valid_time.dim() == 3 and valid_time.shape[1] > 1:
+		valid_time = valid_time.all(dim=1, keepdim=True)
+	gate = gate.reshape(gate.shape[0], -1)
+	valid = valid_time.reshape(valid_time.shape[0], -1).to(dtype=torch.bool)
+	if valid.shape != gate.shape:
+		valid = valid.expand_as(gate)
+	keys = (
+		"shutdowns_per_minute",
+		"mean_shutdown_duration_ms",
+		"p95_shutdown_duration_ms",
+		"max_shutdown_duration_ms",
+		"attenuations_per_minute",
+		"mean_attenuation_duration_ms",
+		"gate_transitions_per_minute",
+	)
+	if not valid.any():
+		return {f"{prefix}{k}": float("nan") for k in keys}
+	valid_minutes = float(valid.sum().detach().cpu()) / sample_rate / 60.0
+	step_ms = 1000.0 / sample_rate
+
+	def _episodes(flag: torch.Tensor) -> torch.Tensor:
+		"""每行的连续 True 段长度，向量化实现（选择器要在网格上调用数百次）。
+
+		在每行两端各插一列 False 后展平，段边界就是展平序列上的上升/下降沿；哨兵列
+		保证不同窗口的段不会跨行粘连。
+		"""
+		flag = (flag & valid).detach().cpu()
+		pad = torch.zeros((flag.shape[0], 1), dtype=torch.bool)
+		flat = torch.cat([pad, flag, pad], dim=1).reshape(-1)
+		edges = flat[1:].to(torch.int8) - flat[:-1].to(torch.int8)
+		starts = (edges == 1).nonzero(as_tuple=True)[0]
+		ends = (edges == -1).nonzero(as_tuple=True)[0]
+		return (ends - starts).to(torch.float64)
+
+	shutdown = _episodes(gate <= zero_tol)
+	attenuation = _episodes(gate < 0.5)
+	below = (gate < 0.5) & valid
+	transitions = (below[:, 1:] != below[:, :-1]) & valid[:, 1:] & valid[:, :-1]
+	transition_count = float(transitions.sum().detach().cpu())
+
+	def _duration_stats(lengths: torch.Tensor) -> tuple:
+		if lengths.numel() == 0:
+			return 0.0, 0.0, 0.0, 0.0
+		durations = lengths * step_ms
+		p95 = float(torch.quantile(durations, 0.95))
+		return float(durations.mean()), p95, float(durations.max()), float(durations.numel())
+
+	shut_mean, shut_p95, shut_max, shut_n = _duration_stats(shutdown)
+	att_mean, _, _, att_n = _duration_stats(attenuation)
+	per_minute = lambda count: count / max(valid_minutes, 1e-9)
+	return {
+		f"{prefix}shutdowns_per_minute": per_minute(shut_n),
+		f"{prefix}mean_shutdown_duration_ms": shut_mean,
+		f"{prefix}p95_shutdown_duration_ms": shut_p95,
+		f"{prefix}max_shutdown_duration_ms": shut_max,
+		f"{prefix}attenuations_per_minute": per_minute(att_n),
+		f"{prefix}mean_attenuation_duration_ms": att_mean,
+		f"{prefix}gate_transitions_per_minute": per_minute(transition_count),
+	}
+
+
 def risk_from_logvar_fault(
 	logvar: torch.Tensor,
 	fault_logit: torch.Tensor,
@@ -455,6 +574,39 @@ def torque_replay_metrics(
 		"mean_risk": float(risk[valid_time].mean().detach().cpu()) if valid_time.any() else float("nan"),
 		"full_shutdown_fraction": _safe_mean((gate <= 1e-6).float(), valid_time),
 		"gate_below_half_fraction": _safe_mean((gate < 0.5).float(), valid_time),
+		**gate_dynamics_metrics(gate, valid_time, sample_rate=sample_rate),
+	}
+
+
+def metrics_for_given_gate(
+	gate: torch.Tensor,
+	predicted_moment: torch.Tensor,
+	true_moment: torch.Tensor,
+	mask: torch.Tensor,
+	sample_rate: float = 200.0,
+) -> Dict[str, float]:
+	"""对**任意**给定的门控序列算 EXPERIMENTS_TODO §2 要求的 13 项指标。
+
+	`torque_replay_metrics` 把门控的构造（risk → sigmoid → rate limit）和指标计算绑在
+	一起，因此无法用来评「随机关断」「硬阈值」「oracle 预测误差」这些不是由 risk
+	生成的门控。这个函数只接受成品 gate，保证九种门控走完全相同的指标代码、同一批
+	模型输出、同一个 active mask——否则跨门控的比较会混入实现差异。
+
+	gate 形状可以是 [B,1,T] 或 [B,T]；广播到关节维后与力矩逐点相乘。
+	"""
+	valid_time = mask.all(dim=1, keepdim=True)
+	if gate.dim() == 2:
+		gate = gate.unsqueeze(1)
+	ideal_tau = moment_to_torque(true_moment)
+	baseline_tau = moment_to_torque(predicted_moment)
+	gated_tau = baseline_tau * gate
+	return {
+		**_torque_metrics_for_command("ungated", baseline_tau, ideal_tau, valid_time, sample_rate),
+		**_torque_metrics_for_command("gated", gated_tau, ideal_tau, valid_time, sample_rate),
+		"mean_gate": _safe_mean(gate, valid_time.expand_as(gate)),
+		"full_shutdown_fraction": _safe_mean((gate <= 1e-6).float(), valid_time.expand_as(gate)),
+		"gate_below_half_fraction": _safe_mean((gate < 0.5).float(), valid_time.expand_as(gate)),
+		**gate_dynamics_metrics(gate, valid_time, sample_rate=sample_rate),
 	}
 
 

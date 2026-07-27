@@ -151,6 +151,45 @@ def apply_fault(
 	return corrupted, fault_target
 
 
+def apply_fault_interval(
+	x: torch.Tensor,
+	feature_groups: Dict[str, List[int]],
+	specs: Sequence[FaultSpec],
+	onset: int,
+	offset: Optional[int] = None,
+	generator: Optional[torch.Generator] = None,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+	"""只在 [onset, offset) 上注入故障，窗口其余部分保持干净（EXPERIMENTS_TODO §4）。
+
+	`apply_fault` 破坏整个窗口，因此无法测量「onset 之后多久门控落下」「recovery 之后
+	多久恢复」这类瞬态量。这里把损坏限制在一个区间里：
+
+	- 故障算子作用在切片 `x[..., onset:offset]` 上而不是整窗后再拼接。对前值保持类故障
+	  （packet_loss*/stuck_signal）这意味着保持的是区间内的过去值；对 delay 意味着流在
+	  onset 处冻结再以滞后重新开始；对 bias_drift 意味着斜坡在故障时长内走完。整窗计算
+	  再裁剪会让区间起点继承窗口开头的历史，语义是错的。
+	- `offset=None` 表示故障持续到窗口结束（无恢复）。
+	- `specs` 可以给多个算子，按顺序叠加在同一区间上，用于「两个同时发生的故障」。
+
+	返回 (corrupted_x, fault_target)，fault_target 逐帧标注区间内为 1，与 `apply_fault`
+	的形状约定一致，因此下游的 AUROC/门控代码不需要区分两条路径。
+	"""
+	length = x.shape[-1]
+	start = max(int(onset), 0)
+	stop = length if offset is None else min(max(int(offset), start), length)
+	corrupted = x.clone()
+	fault_target = torch.zeros((x.shape[0], 1, length), device=x.device, dtype=x.dtype)
+	active_specs = [spec for spec in specs if spec.name != "clean" and spec.probability > 0]
+	if start >= stop or not active_specs:
+		return corrupted, fault_target
+	segment = corrupted[..., start:stop]
+	for spec in active_specs:
+		segment, _ = apply_fault(segment, feature_groups, spec, generator=generator)
+	corrupted[..., start:stop] = segment
+	fault_target[..., start:stop] = 1.0
+	return corrupted, fault_target
+
+
 def _indices_for_group(feature_groups: Dict[str, List[int]], group: str, num_channels: int) -> List[int]:
 	if group == "all":
 		return list(range(num_channels))
