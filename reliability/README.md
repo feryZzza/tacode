@@ -19,7 +19,8 @@ files (`example.py`, `tcn.py`, `dataloader.py`) so the baseline remains intact.
 
 ## What It Implements
 
-- Parsed Nature 2024 dataset indexing from `/home/zfy/dataset/tcn/Parsed`.
+- Parsed Nature 2024 dataset indexing from a configurable `DATA_ROOT`
+  (default: `data/Parsed`).
 - Windowed loading for `_exo.csv` plus `_moment_filt_bio.csv` labels.
 - Valid-label filtering to avoid training on windows where OpenSim moment labels
   are missing.

@@ -1,4 +1,4 @@
-.PHONY: all clean figures zh check-figures
+.PHONY: all clean figures zh checklist supplement submission check-figures
 
 PYTHON ?= python3
 FIGURE_SCRIPT := ../scripts/draw_aaai_figures.py
@@ -9,15 +9,18 @@ OVERVIEW_NPZ ?= figures/data/timeseries_overview.npz
 FIGURE_PDFS := \
 	figures/fig_method_overview.pdf \
 	figures/fig_detection_taxonomy.pdf \
+	figures/fig_detection_full.pdf \
 	figures/fig_safety_utility.pdf \
 	figures/fig_ablation_summary.pdf \
 	figures/fig_stress_transfer.pdf
 
 all: figures main.pdf
 
+submission: all checklist supplement
+
 figures: $(FIGURE_PDFS)
 
-# 出图脚本一次写全五张，用 grouped target 表达，避免并行 make 重复调用。
+# 出图脚本一次写全六张，用 grouped target 表达，避免并行 make 重复调用。
 $(FIGURE_PDFS) &: $(FIGURE_SCRIPT) $(OVERVIEW_NPZ) $(SUITE_DIR)/paper_numbers.json
 	MPLCONFIGDIR=/tmp/tacode_aaai_mpl $(PYTHON) $(FIGURE_SCRIPT) \
 		--output-dir figures \
@@ -41,6 +44,18 @@ main.pdf: main.tex references.bib aaai2027.sty aaai2027.bst $(FIGURE_PDFS)
 	pdflatex -interaction=nonstopmode -halt-on-error main.tex
 	pdflatex -interaction=nonstopmode -halt-on-error main.tex
 
+checklist: ReproducibilityChecklist.pdf
+
+ReproducibilityChecklist.pdf: ReproducibilityChecklist.tex aaai2027.sty
+	pdflatex -interaction=nonstopmode -halt-on-error ReproducibilityChecklist.tex
+	pdflatex -interaction=nonstopmode -halt-on-error ReproducibilityChecklist.tex
+
+supplement: supplement.pdf
+
+supplement.pdf: supplement.tex aaai2027.sty figures/fig_detection_full.pdf figures/fig_ablation_summary.pdf figures/fig_stress_transfer.pdf
+	pdflatex -interaction=nonstopmode -halt-on-error supplement.tex
+	pdflatex -interaction=nonstopmode -halt-on-error supplement.tex
+
 # 中文版用 ctexart，必须走 XeLaTeX；pdflatex 编不过。
 zh: main_zh.pdf
 
@@ -53,3 +68,5 @@ main_zh.pdf: main_zh.tex references.bib aaai2027.bst $(FIGURE_PDFS)
 clean:
 	$(RM) main.aux main.bbl main.blg main.log main.out main.pdf
 	$(RM) main_zh.aux main_zh.bbl main_zh.blg main_zh.log main_zh.out main_zh.pdf
+	$(RM) ReproducibilityChecklist.aux ReproducibilityChecklist.log ReproducibilityChecklist.out ReproducibilityChecklist.pdf
+	$(RM) supplement.aux supplement.log supplement.out supplement.pdf

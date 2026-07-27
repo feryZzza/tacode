@@ -382,6 +382,31 @@ def reliability_gate(
 	return (1.0 - (risk - threshold) / max(softness, 1e-6)).clamp(0.0, 1.0)
 
 
+def causal_gate_rate_limit(
+	gate: torch.Tensor,
+	max_fall_per_step: float = 0.0,
+	max_rise_per_step: float = 0.0,
+) -> torch.Tensor:
+	"""Causally limit gate changes; nonpositive limits leave that direction free.
+
+	A fast fall can be retained for fault response while recovery is slowed by
+	setting only ``max_rise_per_step``.  The operation uses no future sample.
+	"""
+	if gate.shape[-1] < 2 or (max_fall_per_step <= 0 and max_rise_per_step <= 0):
+		return gate
+	out = gate.clone()
+	for t in range(1, gate.shape[-1]):
+		lower = out[..., t - 1] - max(max_fall_per_step, 0.0)
+		upper = out[..., t - 1] + max(max_rise_per_step, 0.0)
+		current = gate[..., t]
+		if max_fall_per_step > 0:
+			current = torch.maximum(current, lower)
+		if max_rise_per_step > 0:
+			current = torch.minimum(current, upper)
+		out[..., t] = current.clamp(0.0, 1.0)
+	return out
+
+
 def risk_from_logvar_fault(
 	logvar: torch.Tensor,
 	fault_logit: torch.Tensor,
@@ -403,6 +428,8 @@ def torque_replay_metrics(
 	sample_rate: float = 200.0,
 	risk: Optional[torch.Tensor] = None,
 	deadband: float = 0.0,
+	gate_max_fall_per_step: float = 0.0,
+	gate_max_rise_per_step: float = 0.0,
 ) -> Dict[str, float]:
 	"""离线比较固定辅助与门控辅助的错误风险。
 
@@ -415,12 +442,19 @@ def torque_replay_metrics(
 	if risk is None:
 		risk = risk_from_logvar_fault(logvar, fault_logit, uncertainty_ref)
 	gate = reliability_gate(risk, softness=gate_softness, deadband=deadband)
+	gate = causal_gate_rate_limit(
+		gate,
+		max_fall_per_step=gate_max_fall_per_step,
+		max_rise_per_step=gate_max_rise_per_step,
+	)
 	gated_tau = baseline_tau * gate
 	return {
 		**_torque_metrics_for_command("baseline", baseline_tau, ideal_tau, valid_time, sample_rate),
 		**_torque_metrics_for_command("gated", gated_tau, ideal_tau, valid_time, sample_rate),
 		"mean_gate": float(gate[valid_time].mean().detach().cpu()) if valid_time.any() else float("nan"),
 		"mean_risk": float(risk[valid_time].mean().detach().cpu()) if valid_time.any() else float("nan"),
+		"full_shutdown_fraction": _safe_mean((gate <= 1e-6).float(), valid_time),
+		"gate_below_half_fraction": _safe_mean((gate < 0.5).float(), valid_time),
 	}
 
 
@@ -436,19 +470,36 @@ def _torque_metrics_for_command(
 	active = valid & (ideal_abs > 0.02)
 	wrong = active & (command * ideal < 0.0)
 	wrong_values = command.abs()[wrong]
-	# E_wrong = Σ_{(j,t)∈A} max(0, −τ^cmd·τ*) · Δt，Δt = 1/sample_rate。
-	# 比例口径把「一步 0.45」和「一百步 0.01」判成后者更差，能量口径纠正这一点。
-	wrong_energy = torch.clamp(-(command * ideal), min=0.0)[active].sum() / sample_rate
+	# X_opp = Σ_{(j,t)∈A} max(0, −τ^cmd·τ*) · Δt，Δt = 1/sample_rate。
+	# 量纲为 (Nm/kg)^2 s；没有角速度项，因此它是反向力矩乘积暴露量，不是机械能。
+	wrong_torque_product_integral = torch.clamp(-(command * ideal), min=0.0)[active].sum() / sample_rate
 	aligned = torch.clamp(command * torch.sign(ideal), min=0.0)
 	retained = aligned[active].sum() / ideal_abs[active].sum().clamp_min(1e-6)
-	jerk = torch.diff(command, dim=-1) * sample_rate
-	jerk_valid = valid[..., 1:]
+	same_direction = active & (command * ideal > 0.0)
+	overlap = torch.minimum(command.abs(), ideal_abs)
+	capped_overlap = overlap[same_direction].sum() / ideal_abs[active].sum().clamp_min(1e-6)
+	over_assistance = same_direction & (command.abs() > ideal_abs)
+	tracking_rmse = torch.sqrt((command[active] - ideal[active]).square().mean()) if active.any() else None
+	torque_rate = torch.diff(command, dim=-1) * sample_rate
+	rate_valid = valid[..., 1:]
+	wrong_integral_value = (
+		float(wrong_torque_product_integral.detach().cpu()) if active.any() else 0.0
+	)
+	torque_rate_value = (
+		float(torque_rate.abs()[rate_valid].mean().detach().cpu()) if rate_valid.any() else float("nan")
+	)
 	return {
 		f"{prefix}_wrong_direction_ratio": _safe_mean(wrong.float(), active),
-		f"{prefix}_wrong_energy": float(wrong_energy.detach().cpu()) if active.any() else 0.0,
+		f"{prefix}_wrong_torque_product_integral": wrong_integral_value,
+		# Deprecated aliases retained so archived reports and aggregation scripts remain readable.
+		f"{prefix}_wrong_energy": wrong_integral_value,
 		f"{prefix}_peak_wrong_torque": float(wrong_values.max().detach().cpu()) if wrong_values.numel() else 0.0,
 		f"{prefix}_retained_aligned_torque": float(retained.detach().cpu()) if active.any() else float("nan"),
-		f"{prefix}_mean_abs_jerk": float(jerk.abs()[jerk_valid].mean().detach().cpu()) if jerk_valid.any() else float("nan"),
+		f"{prefix}_capped_overlap": float(capped_overlap.detach().cpu()) if active.any() else float("nan"),
+		f"{prefix}_over_assistance_fraction": _safe_mean(over_assistance.float(), active),
+		f"{prefix}_tracking_rmse": float(tracking_rmse.detach().cpu()) if tracking_rmse is not None else float("nan"),
+		f"{prefix}_mean_abs_torque_rate": torque_rate_value,
+		f"{prefix}_mean_abs_jerk": torque_rate_value,
 	}
 
 

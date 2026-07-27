@@ -5,7 +5,7 @@ set -euo pipefail
 
 SEEDS=(${SEEDS:-7 13 23})
 GPUS=(${GPUS:-3 4 5})
-DATA_ROOT="${DATA_ROOT:-/home/zfy/dataset/tcn/Parsed}"
+DATA_ROOT="${DATA_ROOT:-data/Parsed}"
 OUTPUT_PREFIX="${OUTPUT_PREFIX:-reports/v2_refreshed_main_seed}"
 LOG_DIR="${LOG_DIR:-logs}"
 BATCH_SIZE="${BATCH_SIZE:-64}"

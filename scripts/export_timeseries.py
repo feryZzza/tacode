@@ -56,7 +56,7 @@ def parse_args() -> argparse.Namespace:
 	parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 	parser.add_argument("--checkpoint", required=True)
 	parser.add_argument("--report", required=True, help="同一模型的 reliability_report.json，用于读回冻结的门控与检测器策略")
-	parser.add_argument("--data-root", default="/home/zfy/dataset/tcn/Parsed")
+	parser.add_argument("--data-root", default="data/Parsed")
 	parser.add_argument("--split", default="test_id", choices=["train", "val", "test_id", "test_ood"])
 	parser.add_argument("--fault", default="sensor_delay", help="场景名，可带强度，例如 sensor_delay@20")
 	parser.add_argument("--trial-index", type=int, default=0, help="该 split 里第几个试验")

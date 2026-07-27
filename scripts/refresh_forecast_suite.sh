@@ -12,9 +12,9 @@ set -uo pipefail
 
 GPUS="${GPUS:-3 5}"
 JOBS_PER_GPU="${JOBS_PER_GPU:-2}"
-DATA_ROOT="${DATA_ROOT:-/home/zfy/dataset/tcn/Parsed}"
+DATA_ROOT="${DATA_ROOT:-data/Parsed}"
 LOG_DIR="${LOG_DIR:-logs/forecast_refresh}"
-PY="${PY:-/home/zfy/miniconda3/envs/pytorch/bin/python}"
+PY="${PY:-python3}"
 BATCH_SIZE="${BATCH_SIZE:-64}"
 NUM_WORKERS="${NUM_WORKERS:-6}"
 PREFETCH_FACTOR="${PREFETCH_FACTOR:-4}"

@@ -2,6 +2,18 @@
 
 记录稿件里每个数字的来源、如何复算，以及哪些项还没验证。
 
+## 最终 AAAI-27 验收口径（2026-07-27）
+
+本节及文首表格记录最终提交状态；后文保留的多轮排版记录仅用于审计修改
+过程，若与本节冲突，以本节为准。最终英文稿共 8 页：正文与 Ethical
+Statement 均在第 7 页结束，参考文献占第 7--8 页。主文保留图 1--3 和表 1；
+消融、压力测试及 LOSO 汇总图移入匿名补充材料。最终稿没有使用
+`\vspace`、`\resizebox`、浮动比例重定义或其他压缩版面命令。
+
+最终构建的正文、补充材料和复现清单均为 US Letter、PDF 1.7；字体全部嵌入，
+没有 Type 3 或 `Identity-H` 字体。正文无 overfull box、未定义引用或编译错误，
+并且不含超链接、书签、附件、作者元数据或外部材料链接。
+
 ## 数据来源链
 
 ```
@@ -27,13 +39,14 @@ sha256sum -c aaai27_metrics.tar.gz.sha256
 
 三个种子（7 / 13 / 23），参与者互斥划分。
 
-检测器有两个口径：**Detector-all** 在八个候选通道里选子集（含 coherence / drift，
-只能离线用），**Detector-online** 把候选集限制在 $K_{gate}$ 六通道内重选一次
-（门控在指令时刻真正能读到的通道）。摘要与正文结论以 Detector-online 为准。
+检测器有两个评估口径：**Detector-all** 在八个候选通道里选子集（含 coherence / drift，
+只能离线用），**Detector-gate** 把候选集限制在当前门控实现的 $K_{gate}$
+六通道内重选一次。摘要与正文结论以 Detector-gate 为准。实际 gate
+不复用该评估子集，而是融合 $K_{gate}$ 中全部可用通道。
 两者由同一次 eval 的同一批验证分数产生，见 `run_reliability_experiment.py`
 的 `select_detector_signals_on_val`。
 
-| 量 | Detector-online | Detector-all | 来源键 |
+| 量 | Detector-gate | Detector-all | 来源键 |
 | --- | --- | --- | --- |
 | 宏平均 AUROC，已见故障 / ID | 0.815 ± 0.006 | 0.849 ± 0.005 | `table2_detection.macro_{online,fused}_auroc.test_id.seen` |
 | 宏平均 AUROC，已见故障 / 留出任务 | 0.740 ± 0.002 | 0.773 ± 0.002 | `…test_ood.seen` |
@@ -50,17 +63,25 @@ OOD 0.774→0.557），其余故障上更小的子集不差甚至更好
 | LOSO 逐参与者降低量 | 0.44 pp，95% CI [0.23, 0.67] | `loso_effect.json` |
 | LOSO 折数 / 为正折数 | 15 / 15 | 同上 |
 | 干净试验同向力矩保留 | 96.1% | `clean_retention_mean` |
-| $E_{wrong}$，留出任务已见故障 | 0.0439 → 0.0298 Nm·s/kg | `table3_safety.test_ood.seen_faults.wrong_energy_{ungated,gated}` |
-| $E_{wrong}$，留出任务未见故障 | 0.0412 → 0.0270 | `…unseen_faults.…` |
+| $X_{\mathrm{opp}}$，留出任务已见故障 | 0.0439 → 0.0298 $(\mathrm{Nm/kg})^2\mathrm{s}$ | `table3_safety.test_ood.seen_faults.wrong_energy_{ungated,gated}`（历史键名） |
+| $X_{\mathrm{opp}}$，留出任务留出算子 | 0.0412 → 0.0270 | `…unseen_faults.…`（兼容历史字段名） |
 | 反向指令峰值，留出任务已见故障 | 0.175 → 0.137 Nm/kg | `…peak_wrong_{ungated,gated}` |
-| 指令 jerk，留出任务已见故障 | 0.237 → 0.279 | `…jerk_{ungated,gated}` |
+| 平均绝对力矩变化率，留出任务已见故障 | 0.237 → 0.279 Nm kg$^{-1}$ s$^{-1}$ | `…jerk_{ungated,gated}`（历史键名） |
 
-已见故障六种：`insole_missing`、`encoder_dropout`、`imu_bias`、`packet_loss`、
-`stuck_imu`、`sensor_delay`。未见故障三种：`packet_loss_burst`、
-`packet_loss_partial`、`sensor_delay_jitter`（模型训练与检测器选择都没用过）。
+训练已见故障六种：`insole_missing`、`encoder_dropout`、`imu_bias`、`packet_loss`、
+`stuck_imu`、`sensor_delay`。留出损坏算子三种：`packet_loss_burst`、
+`packet_loss_partial`、`sensor_delay_jitter`（模型训练与检测器选择都没用过，
+但仍属于已知丢包或延迟故障族，不作 open-set 故障声明）。
 
-正文 §Fault Detection under Task Shift、图 `fig_detection_taxonomy`（(a) 两个融合列，
-(b) 画 Detector-online）与 suite 三者一致，已逐 token 核对。
+审稿核查新增的 clean-adjusted 对比由 `scripts/analyze_gate_specificity.py` 从
+`core_runs.tsv` 确定性生成到 `gate_specificity.{json,md}`。错误方向比例的 fault /
+matched-clean / adjusted 变化为 -0.736 / -0.397 / -0.339 pp；$X_{\mathrm{opp}}$
+为 -0.0114 / -0.0044 / -0.0070 $(\mathrm{Nm/kg})^2\mathrm{s}$。均为 seed × task-split
+匹配的场景汇总对比，不是逐窗口置信区间。
+
+正文 §Fault Detection under Task Shift、主图 `fig_detection_taxonomy`（九种算子、
+八个单通道、两个融合列）和补充图 `fig_detection_full`（18 个 split/operator 行）
+均由 `table1_detection.tsv` 生成。
 行号会随修改漂移，这里只记小节名。
 
 ## 出图脚本的两处静默退化
@@ -104,9 +125,9 @@ data sources: detection=suite, macro=suite, safety=suite, ablation=suite, stress
 
 | 项 | 状态 | 原因 |
 | --- | --- | --- |
-| 页数是否符合 AAAI-27 限制 | 已核（2026-07-27 本机 TinyTeX） | 英文 8 页，正文止于第 7 页、参考文献从第 8 页起，符合「正文 ≤7 页」；见「7 页版面合规」一节 |
-| overfull box | 已核 | 英文 0、中文 0；underfull hbox 也是 0（只剩两条页底 underfull vbox，双栏留白，非缺陷） |
-| 浮动体落位 | 已核 | 图 1 在 p3、表 1 在 p5、图 2/3 在 p6、图 4/5 在 p7，无纯浮动页 |
+| 页数是否符合 AAAI-27 限制 | 已核（2026-07-27，TeX Live 2026） | 英文 8 页；正文与伦理声明止于第 7 页，参考文献从第 7 页开始并延续到第 8 页 |
+| overfull box | 已核 | 英文 0；underfull hbox 2 处、页底 underfull vbox 2 处，均不越界 |
+| 浮动体落位 | 已核 | 图 1 在 p3、表 1 在 p5、图 2 在 p6、图 3 在 p7；消融与压力/LOSO 全图在匿名 supplement |
 | 图 PDF 的 MediaBox 宽度 | 已核 | 五张导出图的 `pdfinfo` 宽度均 ≤ `figsize`，最宽 494 pt = 6.86 in |
 | `tests/test_forecast_residual.py` | 已通过（5 case） | 2026-07-26 本机 |
 | `tests/test_gate_selection.py` | 已通过（2 case） | 同上 |
@@ -123,7 +144,7 @@ make && make zh
 系统 `python3` 没有 torch，用 conda 的 pytorch 环境；该环境没装 pytest，所以走 unittest：
 
 ```bash
-/home/zfy/miniconda3/envs/pytorch/bin/python -m unittest discover -s tests -t . -v
+python3 -m unittest discover -s tests -t . -v
 ```
 
 有 pytest 的环境（如训练机）用 `python -m pytest tests/ -q` 等价。
@@ -131,7 +152,7 @@ make && make zh
 ## 已复核的正文数字（2026-07-27 重跑后，开发机）
 
 按 §13 的映射表把 `main.tex` 与 `paper_numbers.json` / `table*.md` / `loso_effect.txt`
-逐位对照。S1（$E_{wrong}$）与 S2（Detector-online）落地后全部 `v2_fc_*` 重评过一遍，
+逐位对照。S1（$X_{\mathrm{opp}}$）与 S2（Detector-gate；历史键名 online）落地后全部 `v2_fc_*` 重评过一遍，
 Detector-all 的四个宏平均 AUROC 与重跑前逐位一致（说明改动没有动既有口径），
 新增的 online 与能量数字见下。行号按本次修改后的 `main.tex`：
 
@@ -145,18 +166,18 @@ Detector-all 的四个宏平均 AUROC 与重跑前逐位一致（说明改动没
 | §Fault Detection 八个宏平均 AUROC | online 0.815/0.740/0.812/0.715；all 0.849/0.773/0.842/0.778 | 一致 |
 | §Fault Detection 延迟通道代价 | 0.878→0.628（ID）、0.774→0.557（OOD）；burst 0.743→0.886 | `main_detection_aggregate.tsv` 一致 |
 | 保留率与四个 wrong delta | 0.960/0.961，−0.0005/−0.0074/−0.0052/−0.0109/−0.0017/−0.0103 | 一致 |
-| §Safety 能量四项 | 0.0439→0.0298、0.0412→0.0270、峰值 0.175→0.137、jerk 0.237→0.279 | `table3_safety` 一致 |
+| §Safety 幅值敏感四项 | $X_{\mathrm{opp}}$ 0.0439→0.0298、0.0412→0.0270、峰值 0.175→0.137、力矩变化率 0.237→0.279 | `table3_safety` 一致 |
 | `:343` 平均门控区间 | 0.904–0.978 | `gate_mean_range_safety_rows` 0.9043–0.9781 |
 | `:358` 确定性阶段种子散布 | 0.831 ± 0.036 | 0.8310 ± 0.0361 |
 | `:372`–`:373` stress 极值六项 | 见正文 | `stress_max_severity` 一致 |
-| `:382` 强度极值两个融合口径 | 丢包 0.961/0.914（两口径同）；延迟 all 0.899/0.788、online 0.743±0.019 / 0.588±0.003 | `stress_max_severity.*.{fused,online}_auroc` 一致（n=3） |
+| `:382` 强度极值两个融合口径 | 丢包 0.961/0.914（两口径同）；延迟 all 0.899/0.788、causal 0.743±0.019 / 0.588±0.003 | `stress_max_severity.*.{fused,online}_auroc` 一致（n=3；online 为历史键名） |
 | `:375` action 消融三组区间 | 0.842–0.847 / 0.771–0.784 / 0.259–0.278 | 一致 |
 
 注意 `:343` 那句的口径：0.904–0.978 来自 `table3_safety` 的六行聚合
 （clean / seen / unseen × ID / OOD），**不是** `table2_safety.md` 里逐故障行的范围
 （那个是 0.794–0.979）。核对时别拿错表。
 
-参考文献 24 条，与 `main.tex` 的 `\cite` 键集合完全一致，无未引用项、无缺失项。
+参考文献 27 条，与 `main.tex` 的 `\cite` 键集合完全一致，无未引用项、无缺失项。
 
 出图脚本重跑确认无静默退化，末行七项全是 `suite` / `export`。
 
@@ -249,8 +270,8 @@ Detector-all 的四个宏平均 AUROC 与重跑前逐位一致（说明改动没
 `main_zh.tex` 已同步以上全部改动（含面板 (d) caption、消融段落、Limitations 首句）。
 两份 `.tex` 结构检查通过：环境配对、花括号配对、无悬空 `\ref`、无未用 `\label`。
 
-审稿意见里的第 2、3 项各有一半要在服务器上跑（`E_wrong` 需纯 eval 重跑；Detector-all /
-Detector-online 拆分需 checkpoint），已写进 `README.md` 的「待办：需要在服务器上跑」。
+审稿意见里的第 2、3 项各有一半要在服务器上跑（$X_{\mathrm{opp}}$ 需纯 eval 重跑；
+Detector-all / Detector-gate 拆分需 checkpoint），已写进 `README.md` 的执行记录。
 
 ## 全量重评的执行记录（2026-07-27，服务器）
 
@@ -280,7 +301,7 @@ grep -l fault_auroc_online reports/v2_fc_*/reliability_report.json | wc -l   # �
 （`macro_fused_auroc.test_id.seen` 是一个键，不是三层嵌套），按点拆路径取值会全部落空；
 脚本里的 `get()` 因此每层都先试最长匹配。另外 `collect()` 输出的标准差字段名是 `sd` 不是 `std`。
 
-图 5(a) 的一处渲染缺陷（数值口径未变，只改标记样式）：Detector-online 原本画成白色填充的空心圆，
+图 5(a) 的一处渲染缺陷（数值口径未变，只改标记样式）：Detector-gate 原本画成白色填充的空心圆，
 而丢包两行两个口径逐位相同，白填充把实心的 Detector-all 整个盖掉，看上去像 all 缺失。
 改成透明填充（`markerfacecolor="none"`）+ 半径 6.0（实心 4.2），重合时呈同心圆、分离时各自可读。
 
@@ -291,7 +312,7 @@ grep -l fault_auroc_online reports/v2_fc_*/reliability_report.json | wc -l   # �
 
 | # | 问题 | 证据 | 处理 |
 | --- | --- | --- | --- |
-| 1 | 正文称能量降幅「两个划分的干净试验上都可忽略」，与 §Limitations 已承认的 OOD 混淆自相矛盾 | 干净留出 $E_{wrong}$ 0.0316→0.0236，降 25.3%，与故障侧 32%/34% 同量级；干净 ID 才是 0.0408→0.0400 | 拆成两句，ID 说可忽略、OOD 明写 25% 并指向局限性；Limitations 补「能量口径给出同样结论」 |
+| 1 | 正文称幅值敏感指标降幅「两个划分的干净试验上都可忽略」，与 §Limitations 已承认的 OOD 混淆自相矛盾 | 干净留出 $X_{\mathrm{opp}}$ 0.0316→0.0236，降 25.3%，与故障侧 32%/34% 同量级；干净 ID 才是 0.0408→0.0400 | 拆成两句，ID 说可忽略、OOD 明写 25% 并指向局限性 |
 | 2 | 消融用 Detector-all 的理由写成「前几个阶段缺少区分两个口径的通道」——事实相反 | coherence / drift 由输入直接算，五个阶段都有；缺的是 residual / forecast，而这两个恰属 online 通道。`fault_auroc_online` 在每个 stage × seed 都在位 | 改成「Detector-all 是各阶段自身检测器的选择池，故作归因基准」，并披露 `+recon` 一步两口径反号：all $+0.0235\pm0.0042$ vs online $-0.0130\pm0.0018$ |
 | 3 | coherence 被三处标为「离线 / 窗口级」，同时 §Complementary 又称其为 causal | `reliability/metrics.py:107` 用因果 `cumsum` 滚动相关，输出 `[B,1,T]`，逐 timestep；真正窗口级的只有 `drift_score`（整窗最小二乘斜率）。`calibrate_risk` 的签名里根本没有 coherence 参数 | 改为：drift 是定义使然，coherence 是被评估系统的实现选择而非因果性限制；并点明 drift 从未被选中 |
 | 4 | 「最强单通道是 coherence」 | 九种故障宏平均：staleness 0.785(ID)/0.796(OOD)，coherence 只有 0.658/0.663 | 改成「staleness 最广、coherence 最极端」，峰值 1.000 的说法保留 |
@@ -314,7 +335,7 @@ grep -l fault_auroc_online reports/v2_fc_*/reliability_report.json | wc -l   # �
 | 回压后 | 4667 | +488 词 ≈ +10.9 栏英寸 |
 
 回压只动措辞不动结论：合并 Related Work / Problem Formulation / Limitations 的并列短句、
-把 $E_{wrong}$ 从独立 equation 并进 $w$/$\kappa$ 的 align、压缩图 4/5 的 caption、
+压缩 $X_{\mathrm{opp}}$ 公式、图 4/5 的 caption、
 删掉「执行器回放仅作离线代理」等与前句重复的收尾句（中文版同步删除同两句）。
 
 这条已在下一节闭合：本机装上 TeX 后直接量页数，不再用 44.9 词/栏英寸估算。

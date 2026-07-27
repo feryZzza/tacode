@@ -1,0 +1,94 @@
+{
+  "design": {
+    "seeds": [
+      7,
+      13,
+      23
+    ],
+    "splits": [
+      "test_id",
+      "test_ood"
+    ],
+    "seen_faults": [
+      "insole_missing",
+      "encoder_dropout",
+      "imu_bias",
+      "packet_loss",
+      "stuck_imu",
+      "sensor_delay"
+    ],
+    "held_out_operators": [
+      "packet_loss_burst",
+      "packet_loss_partial",
+      "sensor_delay_jitter"
+    ],
+    "matching": "within seed and task split",
+    "unit": "scenario-level aggregate"
+  },
+  "wrong_fraction": {
+    "fault_effect": {
+      "mean": -0.00735925925925926,
+      "sd": 0.0006727117898947322,
+      "n_seeds": 3,
+      "per_seed": [
+        -0.006672222222222223,
+        -0.008016666666666667,
+        -0.007388888888888889
+      ]
+    },
+    "matched_clean_effect": {
+      "mean": -0.003966666666666667,
+      "sd": 0.00042524502740576915,
+      "n_seeds": 3,
+      "per_seed": [
+        -0.0044,
+        -0.00395,
+        -0.00355
+      ]
+    },
+    "clean_adjusted_effect": {
+      "mean": -0.0033925925925925924,
+      "sd": 0.000976930398808035,
+      "n_seeds": 3,
+      "per_seed": [
+        -0.002272222222222222,
+        -0.004066666666666666,
+        -0.0038388888888888886
+      ]
+    },
+    "fault_specific_share_of_total_effect": 0.4609964771011575
+  },
+  "opposition_integral": {
+    "fault_effect": {
+      "mean": -0.011366666666666667,
+      "sd": 0.002032445161211818,
+      "n_seeds": 3,
+      "per_seed": [
+        -0.009883333333333334,
+        -0.013683333333333334,
+        -0.010533333333333334
+      ]
+    },
+    "matched_clean_effect": {
+      "mean": -0.004366666666666666,
+      "sd": 0.0009278110439811183,
+      "n_seeds": 3,
+      "per_seed": [
+        -0.00445,
+        -0.0052499999999999995,
+        -0.0034000000000000002
+      ]
+    },
+    "clean_adjusted_effect": {
+      "mean": -0.007,
+      "sd": 0.0015044378795195682,
+      "n_seeds": 3,
+      "per_seed": [
+        -0.005433333333333333,
+        -0.008433333333333334,
+        -0.0071333333333333335
+      ]
+    },
+    "fault_specific_share_of_total_effect": 0.6158357771260997
+  }
+}

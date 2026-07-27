@@ -5,7 +5,7 @@
 # 避免把口径不一致的报告打进 tarball。
 set -euo pipefail
 
-PY="${PY:-/home/zfy/miniconda3/envs/pytorch/bin/python}"
+PY="${PY:-python3}"
 SUITE_DIR="${SUITE_DIR:-reports/v2_fc_paper_suite}"
 EXPECT_SEEDS="${EXPECT_SEEDS:-3}"
 

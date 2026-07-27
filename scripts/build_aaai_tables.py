@@ -24,7 +24,16 @@ FAULTS = (
 	"sensor_delay_jitter",
 )
 CHALLENGE_FAULTS = {"packet_loss_burst", "packet_loss_partial", "sensor_delay_jitter"}
-DISPLAY_SIGNALS = ("logit", "residual", "forecast", "staleness", "coherence", "drift")
+DISPLAY_SIGNALS = (
+	"logit",
+	"aleatoric",
+	"residual",
+	"forecast",
+	"epistemic",
+	"staleness",
+	"coherence",
+	"drift",
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -66,7 +75,12 @@ def fault_label(fault: str) -> str:
 
 def write_tsv(path: Path, rows: Iterable[dict[str, object]], fields: list[str]) -> None:
 	with path.open("w", encoding="utf-8", newline="") as handle:
-		writer = csv.DictWriter(handle, fieldnames=fields, delimiter="\t")
+		writer = csv.DictWriter(
+			handle,
+			fieldnames=fields,
+			delimiter="\t",
+			lineterminator="\n",
+		)
 		writer.writeheader()
 		writer.writerows(rows)
 
@@ -87,7 +101,7 @@ def build_detection_rows(rows: list[dict[str, str]]) -> list[dict[str, object]]:
 				"n": int(float(row["n"])),
 				"fused_mean": number(row, "auroc_mean"),
 				"fused_std": number(row, "auroc_std"),
-				# Detector-online：候选集限制在 K_gate（门控可用的六路）后的融合 AUROC。
+				# Detector-gate：候选集限制在当前门控实现的 K_gate 后的融合 AUROC；字段名保留 online 兼容旧报告。
 				"fused_online_mean": number(row, "auroc_online_mean"),
 				"fused_online_std": number(row, "auroc_online_std"),
 			}
@@ -103,10 +117,10 @@ def render_detection_markdown(source_rows: list[dict[str, str]]) -> str:
 	lines = [
 		"# Table I. Fault Detection AUROC",
 		"",
-		"Mean +/- std across three seeds. Held-out rows use fault generators excluded from training. "
+		"Mean +/- std across three seeds. Held-out rows use corruption operators excluded from training and detector selection. "
 		"Channels are fixed by the detectability taxonomy; Fused is the frozen q90-max policy and coherence is causal. "
-		"Detector-all searches all eight channels (offline diagnostic ceiling); Detector-online restricts the candidate "
-		"pool to K_gate, the six channels the command-time gate can actually consume.",
+		"Detector-all searches all eight channels (offline diagnostic ceiling); Detector-gate restricts the candidate "
+		"pool to K_gate, the six channels implemented in the evaluated gate.",
 	]
 	for split, title in (("test_id", "ID"), ("test_ood", "OOD")):
 		lines.extend(
@@ -114,8 +128,8 @@ def render_detection_markdown(source_rows: list[dict[str, str]]) -> str:
 				"",
 				f"## {title}",
 				"",
-				"| Fault | Detector-all | Detector-online | Logit | Residual | Forecast | Staleness | Coherence | Drift |",
-				"|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+				"| Fault | Detector-all | Detector-gate | Logit | Aleatoric | Residual | Forecast | Epistemic | Staleness | Coherence | Drift |",
+				"|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
 			]
 		)
 		for fault in FAULTS:
@@ -151,7 +165,7 @@ def build_safety_rows(rows: list[dict[str, str]]) -> list[dict[str, object]]:
 					"gated_wrong_std": number(row, "our_wrong_std"),
 					"wrong_delta_mean": number(row, "gate_wrong_delta_mean"),
 					"wrong_delta_std": number(row, "gate_wrong_delta_std"),
-					# E_wrong 能量口径（Nm/kg*s）+ 峰值反向力矩 + 指令 jerk。
+					# 历史列名沿用 energy / jerk；物理量分别是 torque-product integral 与 torque rate。
 					"ungated_wrong_energy_mean": number(row, "our_ungated_wrong_energy_mean"),
 					"ungated_wrong_energy_std": number(row, "our_ungated_wrong_energy_std"),
 					"gated_wrong_energy_mean": number(row, "our_wrong_energy_mean"),
@@ -185,8 +199,8 @@ def render_safety_markdown(rows: list[dict[str, str]]) -> str:
 		"# Table II. Utility-Aware Gate Safety Trade-off",
 		"",
 		"Mean +/- std across three seeds. Wrong delta is gated minus ungated (negative is safer); "
-		"retained ratio is gated divided by ungated aligned torque. E_wrong is the wrong-direction "
-		"energy in Nm/kg*s; peak wrong torque is in Nm/kg and command jerk in Nm/kg/s.",
+		"retained ratio is gated divided by ungated aligned torque. X_opp is the opposition-weighted "
+		"torque-product integral in (Nm/kg)^2 s; peak wrong torque is in Nm/kg and torque rate in Nm/kg/s.",
 	]
 	for split, title in (("test_id", "ID"), ("test_ood", "OOD")):
 		lines.extend(
@@ -194,7 +208,7 @@ def render_safety_markdown(rows: list[dict[str, str]]) -> str:
 				"",
 				f"## {title}",
 				"",
-				"| Scenario | Wrong ungated | Wrong gated | Wrong delta | E_wrong ungated | E_wrong gated | Peak wrong ungated | Peak wrong gated | Jerk ungated | Jerk gated | Retained ungated | Retained gated | Retained ratio | Mean gate |",
+				"| Scenario | Wrong ungated | Wrong gated | Wrong delta | X_opp ungated | X_opp gated | Peak wrong ungated | Peak wrong gated | Torque rate ungated | Torque rate gated | Retained ungated | Retained gated | Retained ratio | Mean gate |",
 				"|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
 			]
 		)

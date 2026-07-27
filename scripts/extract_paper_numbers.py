@@ -188,7 +188,7 @@ def main() -> None:
 			for _, report in mains:
 				by_seed[report["args"].get("seed")] = detector_macro(report["results"], "fault_auroc", (split,), faults)
 			detection[f"macro_fused_auroc.{split}.{label}"] = collect(by_seed)
-			# Detector-online：候选集限制在 K_gate 六路（门控实际可用）。摘要与主结论用这一组。
+			# Detector-gate：候选集限制在当前门控实现的 K_gate 六路。历史 JSON 键仍名为 online。
 			online_by_seed = {}
 			for _, report in mains:
 				online_by_seed[report["args"].get("seed")] = detector_macro(
@@ -233,8 +233,8 @@ def main() -> None:
 			for field, alias in (
 				("baseline_wrong_direction_ratio", "wrong_ungated"),
 				("gated_wrong_direction_ratio", "wrong_gated"),
-				# E_wrong 能量口径 + 峰值反向力矩 + 指令 jerk：正文 Safety--Utility 那句
-				# 「Peak wrong torque and command jerk follow the same comparison」要有数。
+				# 历史报告以 wrong_energy / jerk 命名；论文按量纲严谨地解释为
+				# torque-product integral / mean absolute torque rate。
 				("baseline_wrong_energy", "wrong_energy_ungated"),
 				("gated_wrong_energy", "wrong_energy_gated"),
 				("baseline_peak_wrong_torque", "peak_wrong_ungated"),

@@ -14,7 +14,7 @@ set -euo pipefail
 
 TASK="${1:-smoke}"
 DEVICE="${DEVICE:-cpu}"
-DATA_ROOT="${DATA_ROOT:-/home/zfy/dataset/tcn/Parsed}"
+DATA_ROOT="${DATA_ROOT:-data/Parsed}"
 PY="${PY:-conda run --no-capture-output -n pytorch python}"
 
 case "${TASK}" in

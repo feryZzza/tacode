@@ -1,10 +1,10 @@
 # Table II. Utility-Aware Gate Safety Trade-off
 
-Mean +/- std across three seeds. Wrong delta is gated minus ungated (negative is safer); retained ratio is gated divided by ungated aligned torque. E_wrong is the wrong-direction energy in Nm/kg*s; peak wrong torque is in Nm/kg and command jerk in Nm/kg/s.
+Mean +/- std across three seeds. Wrong delta is gated minus ungated (negative is safer); retained ratio is gated divided by ungated aligned torque. X_opp is the opposition-weighted torque-product integral in (Nm/kg)^2 s; peak wrong torque is in Nm/kg and torque rate in Nm/kg/s.
 
 ## ID
 
-| Scenario | Wrong ungated | Wrong gated | Wrong delta | E_wrong ungated | E_wrong gated | Peak wrong ungated | Peak wrong gated | Jerk ungated | Jerk gated | Retained ungated | Retained gated | Retained ratio | Mean gate |
+| Scenario | Wrong ungated | Wrong gated | Wrong delta | X_opp ungated | X_opp gated | Peak wrong ungated | Peak wrong gated | Torque rate ungated | Torque rate gated | Retained ungated | Retained gated | Retained ratio | Mean gate |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | clean | 0.075 +/- 0.002 | 0.075 +/- 0.002 | -0.001 +/- 0.000 | 0.0408 +/- 0.0037 | 0.0400 +/- 0.0039 | 0.114 +/- 0.005 | 0.114 +/- 0.005 | 0.29 +/- 0.01 | 0.34 +/- 0.01 | 0.809 +/- 0.017 | 0.777 +/- 0.015 | 0.960 +/- 0.003 | 0.978 +/- 0.001 |
 | insole missing | 0.092 +/- 0.009 | 0.088 +/- 0.008 | -0.004 +/- 0.001 | 0.0503 +/- 0.0128 | 0.0414 +/- 0.0119 | 0.108 +/- 0.010 | 0.105 +/- 0.012 | 0.25 +/- 0.00 | 0.28 +/- 0.01 | 0.675 +/- 0.015 | 0.513 +/- 0.037 | 0.759 +/- 0.037 | 0.869 +/- 0.028 |
@@ -19,7 +19,7 @@ Mean +/- std across three seeds. Wrong delta is gated minus ungated (negative is
 
 ## OOD
 
-| Scenario | Wrong ungated | Wrong gated | Wrong delta | E_wrong ungated | E_wrong gated | Peak wrong ungated | Peak wrong gated | Jerk ungated | Jerk gated | Retained ungated | Retained gated | Retained ratio | Mean gate |
+| Scenario | Wrong ungated | Wrong gated | Wrong delta | X_opp ungated | X_opp gated | Peak wrong ungated | Peak wrong gated | Torque rate ungated | Torque rate gated | Retained ungated | Retained gated | Retained ratio | Mean gate |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | clean | 0.077 +/- 0.005 | 0.070 +/- 0.004 | -0.007 +/- 0.001 | 0.0316 +/- 0.0058 | 0.0236 +/- 0.0044 | 0.151 +/- 0.025 | 0.138 +/- 0.020 | 0.25 +/- 0.01 | 0.30 +/- 0.01 | 0.719 +/- 0.014 | 0.691 +/- 0.014 | 0.961 +/- 0.001 | 0.950 +/- 0.000 |
 | insole missing | 0.095 +/- 0.011 | 0.082 +/- 0.010 | -0.013 +/- 0.002 | 0.0379 +/- 0.0095 | 0.0210 +/- 0.0046 | 0.167 +/- 0.021 | 0.112 +/- 0.020 | 0.22 +/- 0.01 | 0.26 +/- 0.02 | 0.584 +/- 0.039 | 0.493 +/- 0.063 | 0.842 +/- 0.062 | 0.883 +/- 0.038 |

@@ -1,6 +1,6 @@
 # AAAI-27 稿件
 
-风险敏感型任务无关外骨骼辅助的可靠性感知力矩估计。中英双语稿件，图表全部由脚本从
+从故障证据到控制后果的任务无关外骨骼可靠性评估。中英双语稿件，图表全部由脚本从
 实验汇总目录确定性生成。
 
 ## 文件
@@ -9,8 +9,11 @@
 - `main_zh.tex` — 中文版，`ctexart` 文档类，必须用 XeLaTeX 编译。
 - `references.bib` — 参考文献。
 - `aaai2027.sty`、`aaai2027.bst` — AAAI-27 官方 author kit（2026 年 5 月版）原文件，不要修改。
-- `figures/` — 投稿用矢量 PDF，附 SVG 源和 300 dpi PNG 预览。
+- `figures/` — 投稿用矢量 PDF，附 SVG 源和 600 dpi PNG 预览。
 - `figures/data/timeseries_overview.npz` — 图 1(c) 的逐 timestep 导出数据。
+- `ReproducibilityChecklist.tex` — AAAI-27 官方清单原题与逐项回答，单独提交。
+- `REPRODUCIBILITY.md` — 匿名补充材料中的运行顺序、数据布局与核验方法。
+- `FIGURE_QA.md` — 图件数据来源、统计语义和 AAAI 可读性审计。
 - `OUTLINE.md`、`DATA_REQUIREMENTS.md`、`EXPERIMENTS_TODO.md` — 写作与实验规划笔记。
 
 ## 编译
@@ -19,6 +22,7 @@
 make          # 出图 + 英文版
 make zh       # 中文版（XeLaTeX）
 make figures  # 只出图
+make submission  # 英文正文 + 官方复现清单 + 匿名补充材料
 ```
 
 英文版走 pdflatex，中文版走 xelatex。两者共用同一批图。
@@ -30,7 +34,7 @@ make figures  # 只出图
 | 面板 | 数据源 |
 | --- | --- |
 | 检测热力图、宏平均 AUROC | `table1_detection.tsv`、`paper_numbers.json` |
-| 安全—效用 | `table2_safety.tsv` |
+| 控制后果、指令保留、力矩变化率 | `table2_safety.tsv`、`paper_numbers.json` |
 | 消融、压力迁移 | `paper_numbers.json` |
 | LOSO 逐折效应量 | `loso_effect.json` |
 | 图 1(c) 门控时序 | `figures/data/timeseries_overview.npz` |
@@ -72,7 +76,9 @@ npz 由 `../scripts/export_timeseries.py` 从 checkpoint 重放单个窗口导�
 
 四角色分类色（助力蓝 / 传感紫 / 故障红 / 力矩绿），蓝色顺序渐变表示阶段量，以 0.5 为中心的
 蓝-灰-红发散渐变表示 AUROC。每组分类对都带第二编码（marker 形状、填充或直接标注），
-保证色觉障碍下可读。字体嵌成 TrueType（`pdf.fonttype=42`）而不是 Type 3。
+保证色觉障碍下可读。投稿 PDF 中的字形转成轮廓，因而既没有 Type 3，也没有 AAAI
+author kit 要求移除的 Identity-H 字体；可编辑文字保留在配套 SVG 中。所有图内文字按
+至少 9.2 pt 生成，线宽至少 0.5 pt。
 
 四张全宽图按 AAAI 正文宽度 7.0 in（`figure*`）出，`fig_stress_transfer` 按单栏 3.35 in（`figure`）出。
 
@@ -83,10 +89,10 @@ npz 由 `../scripts/export_timeseries.py` 从 checkpoint 重放单个窗口导�
 
 | 项 | 代码落点 | 状态 |
 | --- | --- | --- |
-| S1 `E_wrong` | `reliability/metrics.py:441`（能量）与 `:448`（返回 `*_wrong_energy`） | 已进汇总与正文 §Safety--Utility |
-| S1 峰值 / jerk | 同一函数已有的 `peak_wrong_torque`、`mean_abs_jerk`，补进 `summarize_reliability_suite.py` | 已有数字支撑 |
-| S2 Detector-online | `run_reliability_experiment.py:585` `select_detector_signals_on_val` 在 `K_gate` 内**重选**一次（不是事后过滤），`--detector-online-signals` 给候选池 | 摘要与主结论已改用 online |
-| S2 出图 | `draw_aaai_figures.py` 检测热图多一列融合口径；图 5(a) 实心 = all、空心 = online | 已重出 |
+| S1 $X_{\mathrm{opp}}$ | `reliability/metrics.py:_torque_metrics_for_command` 计算反向力矩乘积积分，同时保留旧 JSON 键兼容历史报告 | 已进汇总与正文 §Safety--Utility |
+| S1 峰值 / torque rate | 同一函数计算 `peak_wrong_torque`、`mean_abs_torque_rate`，同时保留旧键兼容历史报告 | 已有数字支撑 |
+| S2 Detector-gate | `run_reliability_experiment.py:select_detector_signals_on_val` 在当前门控实现的 $\mathcal K_{\rm gate}$ 内重新选择；它是评估口径，实际 gate 使用该集合全部可用通道 | 摘要与主结论采用此口径 |
+| S2 出图 | `draw_aaai_figures.py` 检测热图并列 Detector-all / Detector-gate；压力图实心 = all、空心 = gate | 已重出 |
 
 重跑规模 44 份报告（main / baseline / ablation × 3 seed、stress × 3 seed、loso 15 折）。
 运行时踩到的坑记一笔：eval 进程按 256 核推 OMP 线程池，每进程 135 线程，22 个并发就是
@@ -97,27 +103,27 @@ npz 由 `../scripts/export_timeseries.py` 从 checkpoint 重放单个窗口导�
 
 下面保留两项的原始需求描述，便于复核当初的验收标准。
 
-### S1 —— 补 wrong-direction 能量指标 `E_wrong`
+### S1 —— 补 opposition-weighted torque-product integral $X_{\mathrm{opp}}$
 
 现在的安全指标只有比例（`wrong_direction_ratio`）和峰值（`peak_wrong_torque`）。审稿意见
 是「多少步反向」不等于「反向了多大伤害」：一步 0.45 Nm/kg 的反向和一百步 0.01 的反向，
-比例差 100 倍，实际风险相反。需要一个能量口径：
+比例差 100 倍，暴露幅值却不同。需要一个幅值敏感的离线代理量：
 
 ```
-E_wrong = Σ_{(j,t)∈A} max(0, −τ^cmd_jt · τ*_jt) · Δt      # Δt = 1/200 s
+X_opp = Σ_{(j,t)∈A} max(0, −τ^cmd_jt · τ*_jt) · Δt      # Δt = 1/200 s
 ```
 
-- 落点：`reliability/metrics.py:_torque_metrics_for_command`，紧挨着现有四项返回值加
-  `f"{prefix}_wrong_energy"`。`active`/`ideal` 都已在作用域里，改动约 3 行。
+- 落点：`reliability/metrics.py:_torque_metrics_for_command`，主键为
+  `f"{prefix}_wrong_torque_product_integral"`；`active`/`ideal` 在同一作用域。
+  历史结果仍使用 `*_wrong_energy`，代码保留该别名以便复算。
 - 然后对 main 三 seed（7/13/23）跑 `--mode eval`，重跑 `summarize_reliability_suite.py`，
-  `E_wrong` 会自动进 `core_aggregate.tsv`。
-- `peak_wrong_torque` 和 `mean_abs_jerk` **已经算出来了**（同一函数），只是没进汇总表也没进
-  正文。`summarize_reliability_suite.py` 要把这两列一起带出来，正文 §Safety--Utility 那句
-  「Peak wrong torque and command jerk follow the same comparison」现在没有数字支撑。
+  $X_{\mathrm{opp}}$ 会自动进 `core_aggregate.tsv`。
+- `peak_wrong_torque` 和 `mean_abs_torque_rate` **已经算出来了**（同一函数）；汇总脚本
+  把这两列一起带进论文结果。历史报告的 `mean_abs_jerk` 只作为兼容别名保留。
 - 正文的形式定义（active / wrong / retained 三个公式 + 「收益只来自 `g_t=0`」那句）已经写进
-  `main.tex` §Metrics and Implementation，不需要服务器；只有 `E_wrong` 的数值要等这一步。
+  `main.tex` §Metrics and Implementation，不需要服务器；只有 $X_{\mathrm{opp}}$ 的数值要等这一步。
 
-### S2 —— 拆 Detector-all / Detector-online，摘要改用 online-only AUROC
+### S2 —— 拆 Detector-all / Detector-gate，摘要改用门控候选池 AUROC
 
 冻结的检测子集是 `residual, staleness, coherence`（见 `paper_gap_report.md:35`），但
 **coherence 和 drift 不参与 command-time 门控**（`run_reliability_experiment.py:1055`,
@@ -143,7 +149,7 @@ done
 | 检测器 | 候选通道 | 用途 |
 | --- | --- | --- |
 | Detector-all | 八个（含 coherence、drift） | 离线诊断上限，Table 2 保留 |
-| Detector-online | 六个（`K_gate`） | 门控实际可用，**摘要和主结论改用这一组** |
+| Detector-gate | 六个（`K_gate`） | 当前评测门控实际实现的候选池，**摘要和主结论改用这一组** |
 
 改完要同步：摘要四个 AUROC、§Fault Detection under Task Shift 的四个数、
 `fig_detection_taxonomy` 的融合列（`draw_aaai_figures.py` 要多读一列）、
@@ -168,7 +174,7 @@ make            # 英文，pdflatex
 make zh         # 中文，xelatex
 ```
 
-当前编译结果：英文 8 页（正文 1–7 页，参考文献从第 8 页开始），overfull 0、
-underfull hbox 0、undefined 0、error 0；中文 14 页、四项全 0。
-验收方式见 `RESULTS_PROVENANCE.md`「7 页版面合规」一节——只数「第 8 页有没有正文词」，
-不要用词数系数估算。
+当前编译结果：英文 8 页；正文和伦理声明止于第 7 页，参考文献从第 7 页开始并延续到
+第 8 页，overfull / undefined / error 均为 0。日志有两处普通段落的 underfull hbox
+以及两处双栏页底 underfull vbox，不造成越界。消融和压力/LOSO 全图移入 3 页匿名补充
+材料，主文保留对应数值和统计限定。官方复现清单单独编译为 2 页。

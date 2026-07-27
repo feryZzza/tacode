@@ -1,6 +1,6 @@
 {
   "args": {
-    "data_root": "/home/zfy/dataset/tcn/Parsed",
+    "data_root": "data/Parsed",
     "output_dir": "reports/reliability_human",
     "checkpoint": "",
     "nature_baseline_checkpoint": "models/trained_tcn.tar",

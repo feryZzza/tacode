@@ -24,7 +24,7 @@ set -uo pipefail
 DEVICE="${DEVICE:-cuda}"
 BATCH_SIZE="${BATCH_SIZE:-16}"
 EPOCHS="${EPOCHS:-20}"
-DATA_ROOT="${DATA_ROOT:-/home/zfy/dataset/tcn/Parsed}"
+DATA_ROOT="${DATA_ROOT:-data/Parsed}"
 SEEDS="${SEEDS:-7 13 23}"
 ABLATION_SEED="${ABLATION_SEED:-7}"
 LIMIT_TRIALS="${LIMIT_TRIALS:-0}"

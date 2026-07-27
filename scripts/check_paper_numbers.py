@@ -62,7 +62,7 @@ def main() -> int:
 
 	groups: list[tuple[str, list[tuple[str, str]]]] = [
 		(
-			"检测宏平均（Detector-online / all）",
+			"检测宏平均（Detector-gate / all；suite 兼容键仍为 online）",
 			[
 				("table2_detection.macro_online_auroc.test_id.seen", "0.815"),
 				("table2_detection.macro_online_auroc.test_ood.seen", "0.740"),
@@ -101,7 +101,7 @@ def main() -> int:
 			],
 		),
 		(
-			"安全能量与峰值/jerk（留出任务）",
+			"安全力矩乘积积分与峰值/力矩变化率（留出任务；suite 使用历史键名）",
 			[
 				("table3_safety.test_ood.seen_faults.wrong_energy_ungated", "0.0439"),
 				("table3_safety.test_ood.seen_faults.wrong_energy_gated", "0.0298"),

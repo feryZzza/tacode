@@ -6,7 +6,7 @@
 set -euo pipefail
 
 SUITE_DIR="${SUITE_DIR:-reports/v2_fc_paper_suite}"
-PY="${PY:-/home/zfy/miniconda3/envs/pytorch/bin/python}"
+PY="${PY:-python3}"
 PRIMARY="${PRIMARY:-reports/v2_fc_main_seed7/reliability_report.json}"
 
 cd "$(dirname "$0")/.."

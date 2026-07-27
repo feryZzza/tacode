@@ -55,7 +55,7 @@ from tcn import TCN
 
 def parse_args() -> argparse.Namespace:
 	parser = argparse.ArgumentParser(description=__doc__)
-	parser.add_argument("--data-root", default="/home/zfy/dataset/tcn/Parsed")
+	parser.add_argument("--data-root", default="data/Parsed")
 	parser.add_argument("--output-dir", default="reports/reliability")
 	parser.add_argument("--checkpoint", default="")
 	parser.add_argument("--nature-baseline-checkpoint", default="models/trained_tcn.tar")
@@ -113,6 +113,10 @@ def parse_args() -> argparse.Namespace:
 	parser.add_argument("--eval-ignore-history", type=int, default=0)
 	parser.add_argument("--gate-softness", type=float, default=0.5)
 	parser.add_argument("--gate-deadband", type=float, default=0.0, help="Risk margin within which the gate stays at 1.0 (no clean-condition penalty).")
+	parser.add_argument("--gate-max-fall-per-step", type=float, default=0.0,
+		help="Optional causal limit on gate decrease per sample; <=0 disables the fall limit.")
+	parser.add_argument("--gate-max-rise-per-step", type=float, default=0.0,
+		help="Optional causal limit on gate recovery per sample; <=0 disables the rise limit.")
 	parser.add_argument("--select-gate-on-val", action="store_true", help="Pick gate softness/deadband on val clean, then freeze for test.")
 	parser.add_argument("--val-wrong-margin", type=float, default=0.01, help="Allowed wrong-direction increase over ungated when selecting the gate on val.")
 	parser.add_argument("--gate-validation-faults", default="insole_missing,encoder_dropout,packet_loss,sensor_delay",
@@ -143,8 +147,8 @@ def parse_args() -> argparse.Namespace:
 		"--detector-online-signals",
 		default="logit,aleatoric,residual,forecast,epistemic,staleness",
 		help=(
-			"Candidate pool for the Detector-online fusion (K_gate: channels the command-time gate "
-			"can actually use; coherence/drift are excluded). Reported as *_auroc_online alongside "
+			"Candidate pool for the Detector-gate evaluation fusion (K_gate: channels implemented "
+			"in the evaluated gate; coherence/drift are excluded). Stored under the legacy *_auroc_online keys alongside "
 			"the eight-channel Detector-all fusion."
 		),
 	)
@@ -614,7 +618,7 @@ def select_detector_signals_on_val(
 		args.mc_samples = saved_mc_samples
 	max_signals = max(args.detector_max_signals, 1)
 	signals, info = select_detector_signal_subset(clean, faults, refs, max_signals=max_signals)
-	# Detector-online：同一批 val 分数，候选集限制在 K_gate（门控实际能用的通道）里重选一次。
+	# Detector-gate：同一批 val 分数，候选集限制在当前门控实现的 K_gate 通道里重选一次。
 	online_signals, online_info = select_detector_signal_subset(
 		clean, faults, refs, max_signals=max_signals, candidate_pool=online_pool
 	)
@@ -638,7 +642,8 @@ def detector_aurocs(
 	"""对每路信号和融合分数分别计算 clean-vs-fault AUROC。
 
 	signal_names 是 Detector-all（八路候选里选出的冻结子集）；online_signal_names 给出
-	Detector-online（候选限制在 K_gate 六路），结果写成 f"{primary_key}_online"。
+	Detector-gate（候选限制在当前门控实现的 K_gate 六路），结果为兼容历史报告仍写成
+	f"{primary_key}_online"。
 	两者共用同一批已采集的分数，只是融合口径不同，额外开销可以忽略。
 	"""
 	metrics: Dict[str, float] = {}
@@ -741,7 +746,11 @@ def select_gate_on_val(
 		return args.gate_softness, deadband, {"policy_source": "fixed_cli_no_val_outputs"}
 
 	clean_risk = risk_from_outputs(outputs, risk_refs)
-	clean_ungated = gate_metrics_for_outputs(outputs, clean_risk, uncertainty_ref, softness=1e6, deadband=1e6)
+	clean_ungated = gate_metrics_for_outputs(
+		outputs, clean_risk, uncertainty_ref, softness=1e6, deadband=1e6,
+		max_fall_per_step=args.gate_max_fall_per_step,
+		max_rise_per_step=args.gate_max_rise_per_step,
+	)
 	clean_wrong_limit = clean_ungated.get("gated_wrong_direction_ratio", 1.0) + args.val_wrong_margin
 	clean_ungated_retained = clean_ungated.get("gated_retained_aligned_torque", 0.0)
 	clean_retained_floor = clean_ungated_retained * max(args.gate_clean_retained_floor, 0.0)
@@ -754,7 +763,11 @@ def select_gate_on_val(
 		if fault_outputs is None:
 			continue
 		fault_risk = risk_from_outputs(fault_outputs, risk_refs)
-		fault_ungated = gate_metrics_for_outputs(fault_outputs, fault_risk, uncertainty_ref, softness=1e6, deadband=1e6)
+		fault_ungated = gate_metrics_for_outputs(
+			fault_outputs, fault_risk, uncertainty_ref, softness=1e6, deadband=1e6,
+			max_fall_per_step=args.gate_max_fall_per_step,
+			max_rise_per_step=args.gate_max_rise_per_step,
+		)
 		fault_cases.append(
 			{
 				"name": fault_name,
@@ -774,7 +787,11 @@ def select_gate_on_val(
 		"constraints_met": False,
 	}
 	for softness in grid:
-		clean_metrics = gate_metrics_for_outputs(outputs, clean_risk, uncertainty_ref, softness=softness, deadband=deadband)
+		clean_metrics = gate_metrics_for_outputs(
+			outputs, clean_risk, uncertainty_ref, softness=softness, deadband=deadband,
+			max_fall_per_step=args.gate_max_fall_per_step,
+			max_rise_per_step=args.gate_max_rise_per_step,
+		)
 		clean_wrong = clean_metrics.get("gated_wrong_direction_ratio")
 		clean_retained = clean_metrics.get("gated_retained_aligned_torque")
 		if clean_wrong is None or clean_retained is None:
@@ -788,7 +805,11 @@ def select_gate_on_val(
 		fault_retained_ratios = []
 		fault_names = []
 		for case in fault_cases:
-			metrics = gate_metrics_for_outputs(case["outputs"], case["risk"], uncertainty_ref, softness=softness, deadband=deadband)
+			metrics = gate_metrics_for_outputs(
+				case["outputs"], case["risk"], uncertainty_ref, softness=softness, deadband=deadband,
+				max_fall_per_step=args.gate_max_fall_per_step,
+				max_rise_per_step=args.gate_max_rise_per_step,
+			)
 			wrong = metrics.get("gated_wrong_direction_ratio")
 			retained = metrics.get("gated_retained_aligned_torque")
 			if wrong is None or retained is None:
@@ -855,6 +876,8 @@ def gate_metrics_for_outputs(
 	uncertainty_ref: float,
 	softness: float,
 	deadband: float,
+	max_fall_per_step: float = 0.0,
+	max_rise_per_step: float = 0.0,
 ) -> Dict[str, float]:
 	return torque_replay_metrics(
 		outputs["mean"],
@@ -866,6 +889,8 @@ def gate_metrics_for_outputs(
 		gate_softness=softness,
 		risk=risk,
 		deadband=deadband,
+		gate_max_fall_per_step=max_fall_per_step,
+		gate_max_rise_per_step=max_rise_per_step,
 	)
 
 
@@ -1114,20 +1139,30 @@ def reliability_metrics_from_outputs(
 		refs=risk_refs,
 	)
 	if risk_refs is not None:
-		metrics["mean_calibrated_risk"] = float(risk[time_mask].mean().detach().cpu()) if time_mask.any() else float("nan")
+		mean_score = float(risk[time_mask].mean().detach().cpu()) if time_mask.any() else float("nan")
+		metrics["mean_normalized_anomaly_score"] = mean_score
+		# Compatibility alias for archived aggregators.
+		metrics["mean_calibrated_risk"] = mean_score
 	metrics.update(
 		torque_replay_metrics(
 			mean, y, logvar, fault_logit, mask, uncertainty_ref,
 			gate_softness=gate_softness,
 			risk=risk if risk_refs is not None else None,
 			deadband=gate_deadband,
+			gate_max_fall_per_step=args.gate_max_fall_per_step,
+			gate_max_rise_per_step=args.gate_max_rise_per_step,
 		)
 	)
 	# 轻量动力学在环代理收益（门控后的指令施加到真实生物力矩上）。
 	vel_idx = [i for i in (velocity_indices or []) if i >= 0]
 	if "velocity" in outputs and len(vel_idx) == mean.shape[1]:
-		from reliability.metrics import moment_to_torque, reliability_gate
+		from reliability.metrics import causal_gate_rate_limit, moment_to_torque, reliability_gate
 		gate = reliability_gate(risk, softness=gate_softness, deadband=gate_deadband)
+		gate = causal_gate_rate_limit(
+			gate,
+			max_fall_per_step=args.gate_max_fall_per_step,
+			max_rise_per_step=args.gate_max_rise_per_step,
+		)
 		command = moment_to_torque(mean) * gate
 		metrics.update(
 			closed_loop_metrics(
@@ -1184,6 +1219,8 @@ def evaluate_gate_sweep(
 				gate_softness=softness,
 				risk=risk,
 				deadband=sweep_deadband,
+				gate_max_fall_per_step=args.gate_max_fall_per_step,
+				gate_max_rise_per_step=args.gate_max_rise_per_step,
 			)
 			metrics["gate_deadband"] = sweep_deadband
 			results[key] = metrics
@@ -1275,9 +1312,9 @@ def select_detector_signal_subset(
 ) -> tuple[List[str], Dict[str, object]]:
 	"""Select a compact detector fusion using validation clean/fault labels only.
 
-	candidate_pool 限制搜索空间。Detector-online 用它把候选压到 K_gate 六路
+	candidate_pool 限制搜索空间。Detector-gate 用它把候选压到当前门控实现的 K_gate 六路
 	（coherence/drift 不参与 command-time 门控，见 reliability_metrics_from_outputs
-	里 calibrate_risk(drift=None)），使检测器成绩和门控实际可用的信号同口径。
+	里 calibrate_risk(drift=None)），使评估检测器与实际门控的信号池同口径。
 	"""
 	pool = set(candidate_pool) if candidate_pool is not None else None
 	available = [
