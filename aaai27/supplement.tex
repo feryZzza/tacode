@@ -140,6 +140,74 @@ This fold-level interval, rather than the variation over three training seeds,
 supports the manuscript's primary uncertainty statement.
 
 \clearpage
+\section{Reselection, Matched Controls, and Transients}
+
+\paragraph{Constrained reselection.}
+The revised rule minimizes validation $X_{\mathrm{opp}}$ over $216$ candidates
+per seed, formed by crossing the softness grid with causal rate limits
+$\lambda^{\downarrow},\lambda^{\uparrow}\in\{0,0.001,0.0025,0.005,0.02,0.05\}$,
+subject to six clean-side constraints: aligned-command retention,
+capped-overlap retention, tracking RMSE, full-shutdown fraction, mean absolute
+torque rate, and false shutdowns per minute. All six hold in every seed. At the
+selected points the validation clean values are $X_{\mathrm{opp}}=0.1003$,
+tracking RMSE $0.0456$~Nm/kg, capped-overlap retention $0.631$, full-shutdown
+fraction $0.0028$, $0.510$ shutdowns per minute, and mean absolute torque rate
+$0.258$~Nm\,kg$^{-1}$\,s$^{-1}$; validation fault-side $X_{\mathrm{opp}}$ is
+$0.1129$. Seed 7 selects $(\gamma,\lambda^{\downarrow},\lambda^{\uparrow})=
+(0.5,0.0025,0.005)$ and seeds 13 and 23 select $(4.0,0.02,0.02)$, so the
+deadband varies over $0.263$--$0.339$ and the rate limits are not identical
+across seeds.
+
+\paragraph{Nine-gate comparison and randomization.}
+The matched comparison spans $280$ rows per seed over nine gates plus
+leave-one-out variants, with $1000$-draw randomization in $120$ cells. On ID
+faults, fault-side $X_{\mathrm{opp}}$ is $0.0479$ with all six channels,
+$0.0479$ without the fault logit (bit-identical), $0.0479$ without aleatoric,
+$0.0479$ without epistemic, $0.0479$ without staleness, $0.0481$ without
+forecast, $0.0482$ for the validation-selected subset, $0.0482$ for
+reconstruction only, $0.0493$ without reconstruction, $0.0534$ for the oracle
+error gate, $0.0565$ for staleness only and for fault only (both exactly equal
+to ungated, $0.0565$), and $0.0223$ for a hard threshold at $170$ shutdowns per
+minute. Random attenuation attains percentile $\geq 0.5$ in $11$ cells; the
+worst is $\mathrm{test\_id}/\mathrm{packet\_loss}$ at percentile $1.000$
+($0.04101$ for the gate versus $0.04084$ for the permutation), whereas the
+strongest cell against random shutdown reaches only $0.272$.
+
+\paragraph{Rate-limit and hysteresis grid.}
+The dynamics sweep contains $468$ rows per seed. Relative to ungated ID faults
+($X_{\mathrm{opp}}=0.0620$, torque rate $0.267$), $36$ rate-limited settings
+lower $X_{\mathrm{opp}}$ without raising torque rate. Representative points:
+$(\lambda^{\downarrow},\lambda^{\uparrow})=(0,0.001)$ gives $0.0278$ at torque
+rate $0.096$ and clean retention $0.501$; $(0.05,0.001)$ gives $0.0322$ at
+$0.115$ and $0.625$; $(0.02,0.001)$ gives $0.0371$ at $0.138$, clean retention
+$0.710$, and $1.32$ clean shutdowns per minute. Hysteresis gives $0.0083$ at
+clean retention $0.421$ with a $2360$~ms $95$th-percentile closure.
+
+\paragraph{Transients.}
+The transient protocol contributes $1608$ rows across onset fractions, six
+durations, recovery and no-recovery conditions, and a clean-pause negative
+control. Rows without a finite duration are the no-recovery condition, in which
+the fault persists to the window end; their onset latency is defined but
+recovery latency is necessarily absent. Miss rates and onset-to-$g<0.5$ delays
+are $0.945/5.2$~ms, $0.933/12.9$~ms, $0.898/36.6$~ms, $0.814/102.4$~ms,
+$0.767/266.4$~ms, and $0.551/612.4$~ms for $25$, $50$, $100$, $250$, $500$~ms
+and persistent faults. False shutdowns are $18.9$--$19.2$ per minute in all
+fault conditions and $18.9$ in the clean-pause control, with $54.3$ alarm
+transitions per minute in the control.
+
+\paragraph{Paired analysis and reverse ablation.}
+The paired analysis matches windows on (participant, trial, window start),
+yielding $13{,}041$ pairs with zero unmatched windows dropped over $51$ trials
+and $216$ summary cells. Because only two participants are held out, the
+participant-level bootstrap admits three distinct resampled means, so all $216$
+cells are flagged underpowered; $48$ of $54$ $X_{\mathrm{opp}}$ cells have
+intervals excluding zero and $52$ have negative point estimates, and $66$ of
+$72$ across-seed contrasts are sign-consistent. The reverse ablation reports
+eight cells at three seeds each: the seven required leave-one-component-out
+configurations plus an all-channel reference. The Pareto comparison restricts
+the fault-side mean to the operator set shared by all cells, since the trained
+and eval-side cells were run over different operator lists.
+
 \section{Reproduction Notes}
 
 The submission package contains the official AAAI reproducibility checklist
@@ -158,6 +226,14 @@ schedule or early stopping. With the configured negative
 \texttt{clean\_sample\_prob}, clean and each of the six training faults are
 sampled uniformly. The checkpoint minimizes clean-validation
 $\mathrm{RMSE}+0.02\,\mathrm{coverage\ ECE}$ over epochs.
+
+All runs use a single NVIDIA A100 80GB PCIe GPU (driver 570.211.01) on an
+x86-64 host with 503 GB of system memory under Ubuntu 22.04.5 LTS (Linux
+6.2.1), with Python 3.12 and PyTorch 2.11.0 built against CUDA 12.8. Training
+one seed takes $30$--$50$ GPU-minutes depending on the enabled heads, and seeds
+run concurrently on separate devices; the gate reselection, matched-control,
+transient, paired, and reverse-ablation analyses reuse archived checkpoints and
+are evaluation-only.
 
 The staleness statistic uses threshold $10^{-3}$ and a 25-sample trailing
 window; coherence uses a 32-sample trailing window and clamps each rolling

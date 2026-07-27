@@ -509,6 +509,73 @@ xlabel / 标题 / 刻度标签 / 数值标注，横纵都查，余量同样按�
 - 单测 14/14、`check_paper_numbers.py`「缺失键数量: 0」、`make check-figures` 通过、
   `data sources` 七项全是 `suite` / `export`。
 
+## §1–§6 进正文 + 7 页正文合规（2026-07-28，本机）
+
+新增的六组实验（工作点重选、匹配对照、限速/迟滞网格、瞬态、配对双重差分、反向消融）
+这一轮全部写进正文，英文版从「正文溢到第 8 页 55 行」压回**参考文献从第 8 页第 1 行开始**。
+
+### 验收口径
+
+AAAI-27 的硬约束是「正文最多 7 页，第 8–9 页只放参考文献，伦理声明算正文」，
+所以验收命令是这两条，而不是看总页数：
+
+```bash
+pdftotext -f 8 -l 8 main.pdf - | grep -n References   # 必须是 1:References
+pdfinfo main.pdf | grep Pages                          # 必须 ≤ 9
+```
+
+现在：`1:References`、`Pages: 8`、overfull 0、undefined 0、warning 0。
+
+### 怎么压下来的
+
+只动措辞与版式，**没有删任何数字或结论**（删实质内容需要先定夺）：
+
+- 把 6 个展示公式改成行内：预测分布、$\mathcal{L}_{\mathrm{mom}}$（aligned→单式）、
+  $\mathcal{L}_{\mathrm{rec}}/\mathcal{L}_{\mathrm{pred}}$、$q^{\mathrm{rec}}/q^{\mathrm{pred}}$、
+  $r_t$ 融合式、$g_t$ 增益式。$X_{\mathrm{opp}}$ 与 $J_{\mathrm{det}}$ 保留为展示式。
+- 三张 `figure*` 宽度 `\textwidth` → `0.84\textwidth`。这是关键一步：
+  0.9 时 References 落在 p8 第 19 行，0.87 → 6 行，0.84 → 4 行。
+- 最后 4 行靠 6 处等义改写吃掉（结论、伦理声明、讨论、局限性、消融段）。
+
+### 回到 0.9 图宽（同日追加）
+
+图放大回 `0.9\textwidth` 后重新溢出 19→5 行，继续做纯措辞压缩到 **0:溢出**，
+最终仍是 `1:References` / `Pages: 8` / overfull 0 / warning 0，图宽定在 `0.9\textwidth`。
+关键一步是术语缩写：在 Experimental Setup 定义 `HT`（training-held-out）对 `ID`，
+正文 9 处 “training-held-out” 换成 HT，表 1 表头同步改为 `Training-held-out (HT) tasks`。
+其余是等义改写：Discussion 首句、Limitations 首段、Conclusion、消融段、匹配对照段。
+数字与结论一个没删。
+
+同轮验收（上文早期章节里的「单测 14/14」是当时的计数，现已扩到 49）：
+`check_paper_numbers.py` 缺失键 0、`make check-figures` 通过、
+`data sources` 七项全是 `suite`/`export`、`unittest discover` 49/49 OK、
+四份 PDF 分别 8 / 15 / 5 / 2 页且 overfull 全 0。
+
+页面分布：p3 图 1、p5 表 1、p6 图 2+图 3、正文与伦理声明止于 p7、p8 全是参考文献。
+p6 仍是双栏浮动页（332 词），`\dbltopfraction`/`\dblfloatpagefraction`/`[!t]` 都推不动它，
+唯一有效的杠杆就是图宽。
+
+### 中文版同步
+
+`main_zh.tex` 之前还停在旧结论（局限性里写「缺少等保留率随机门控、oracle gate…」，
+而这些实验已经跑完），本轮补齐：摘要、门控方法（重选规则 + 因果限速）、
+两个新结果小节（重选工作点与匹配对照 / 瞬态·配对·反向消融）、讨论、局限性、结论。
+顺带修掉两处 overfull：$\gamma$ 取值集合改成行内列举、检测表 `\small` → `\scriptsize`。
+现在中文 15 页，overfull / missing character / undefined / error 全 0。
+
+### ReproducibilityChecklist 之前编译不过
+
+`ts1-qtmr.tfm` 缺失导致 fatal error，`tlmgr install tex-gyre tex-gyre-math` 后 2 页正常。
+「computing infrastructure」一项据实改成 `yes`，并把环境写进 supplement 的复现说明：
+A100 80GB PCIe（驱动 570.211.01）、503 GB 内存、Ubuntu 22.04.5（Linux 6.2.1）、
+Python 3.12 + PyTorch 2.11.0/CUDA 12.8，单 seed 训练 30–50 GPU-min（从 `logs/v2_reverse_*`
+的起止时间实测），§1–§6 全部是纯 eval。
+
+### 仍然挂起
+
+中英表格数不对等（zh 4 表 / en 1 表）继续挂起，理由不变：英文正文卡在 7 页，
+补表要先腾出约一栏，只能删分析换。取舍要先定夺。
+
 ## 服务器侧建议保留
 
 主 checkpoint 不要删。补测某个故障或某个指标时，有 checkpoint 是几十分钟纯 eval；
