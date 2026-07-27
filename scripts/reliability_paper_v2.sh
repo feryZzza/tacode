@@ -368,6 +368,25 @@ run_action() {
 	done
 }
 
+# EXPERIMENTS_TODO §6：leave-one-component-out 消融。
+# 有序消融只能描述固定添加顺序；这里从 full model 逐一拿掉一个组件，才能判断组件是否被支配。
+# 七格里只有三格需要新训练：
+#   minus probabilistic  -> det_aug_recon_fc
+#   minus reconstruction -> prob_aug_fc
+#   minus fault head     -> prob_aug_recon_fc_nofault（仍注入故障，只是不训练 fault head）
+# 另外四格复用现成 checkpoint：full model = v2_main_seed*，minus forecasting =
+# v2_ablation_prob_aug_recon_seed*（三 seed 都已训好），minus staleness 与
+# validation-selected-subset 是纯评估侧的门控通道差异，由 aaai27_gate_baselines 覆盖。
+REVERSE_ABLATION_MODES="${REVERSE_ABLATION_MODES:-det_aug_recon_fc prob_aug_fc prob_aug_recon_fc_nofault}"
+
+run_reverse_ablation() {
+	for mode in ${REVERSE_ABLATION_MODES}; do
+		for seed in ${SEEDS}; do
+			train_run "reports/v2_reverse_${mode}_seed${seed}" human "${mode}" "${seed}"
+		done
+	done
+}
+
 # E7：留一被试交叉验证。每折留 1 个被试做 test，前一个被试做 val。
 # 复用 train_run（含多卡队列），通过 extra args 传入显式 val/test 被试。
 run_loso() {
@@ -413,13 +432,14 @@ case "${TASK}" in
 	stress)     run_stress ;;
 	ensemble)   run_ensemble ;;
 	action)     run_action; flush_queue ;;
+	reverse)    run_reverse_ablation; flush_queue ;;
 	loso)       run_loso; flush_queue ;;
 	summary)    run_summary ;;
 	# core：训练类全部入队并行跑完，再做依赖主 checkpoint 的 stress/ensemble 与汇总。
 	core)       run_main; run_ablations; run_baseline; run_action; flush_queue; run_stress; run_ensemble; run_summary ;;
 	all)        run_main; run_ablations; run_baseline; run_action; run_loso; flush_queue; run_stress; run_ensemble; run_summary ;;
 	*)
-		echo "Usage: $0 {main|ablations|baseline|stress|ensemble|action|loso|summary|core|all}" >&2
+		echo "Usage: $0 {main|ablations|baseline|stress|ensemble|action|reverse|loso|summary|core|all}" >&2
 		echo "Overrides: DEVICE=cuda EPOCHS=20 SEEDS='7 13 23' MC_SAMPLES=10 LIMIT_TRIALS=0" >&2
 		echo "          PARALLEL=1 GPUS='1 6' GPU_FREE_MEM_MB=2000 GPU_MAX_UTIL=10 WAIT_FOR_GPU=1 GPU_POLL_SECONDS=30" >&2
 		echo "          BATCH_SIZE=64 NUM_WORKERS=12 AMP=bf16" >&2
