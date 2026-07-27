@@ -52,9 +52,63 @@ def fmt(value: Any) -> str:
 	return str(value)
 
 
+#: AAAI-27 新增章节（EXPERIMENTS_TODO §1–§6）在正文里引用的数字。
+#: 与上面的旧 suite 分开：那些键来自 `paper_numbers.json`，这些来自
+#: `aaai27_gate_numbers.json`（由 extract_aaai27_gate_numbers.py 生成）。
+GATE_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
+	(
+		"§1 工作点重选（val 侧六项 clean 约束；跨 3 seed）",
+		[
+			("gate_reselection.objective", "x_opp"),
+			("gate_reselection.val_clean_x_opp.mean", "0.100"),
+			("gate_reselection.val_fault_x_opp.mean", "0.113"),
+			("gate_reselection.val_clean_tracking_rmse.mean", "0.0456"),
+			("gate_reselection.val_clean_capped_overlap_retention.mean", "0.631"),
+			("gate_reselection.val_clean_full_shutdown_fraction.mean", "0.0028"),
+			("gate_reselection.val_clean_shutdowns_per_minute.mean", "0.508"),
+			("gate_reselection.val_clean_mean_abs_torque_rate.mean", "0.258"),
+			("gate_reselection.rate_limit_identical_across_seeds", "False"),
+		],
+	),
+	(
+		"§2 随机化检验（最坏格子必须进正文）",
+		[
+			("gate_baselines.draws", "1000"),
+			("gate_baselines.randomization_n_cells", "120"),
+			("gate_baselines.randomization_worst.random_attenuation.percentile", "1.000"),
+			("gate_baselines.randomization_worst.random_shutdown.percentile", "0.272"),
+		],
+	),
+	(
+		"§4 瞬态（负对照 + 短故障漏检）",
+		[
+			("transient_faults.n_rows", "1608"),
+		],
+	),
+	(
+		"§5 配对双重差分（被试数是硬上限）",
+		[
+			("paired_analysis.n_underpowered_cells", "216"),
+		],
+	),
+	(
+		"§6 反向消融（七格 × 3 seed；另加 all-gate-channels 参照格，故为 8）",
+		[
+			# §6 要七格，这里是 8：多出来的 `all_gate_channels` 是评测侧参照
+			# （full stack + 六路门控全开），用来把「去掉某一路」的效应量与
+			# 「什么都不去掉」对齐。它不是第八个消融，但要进 Pareto 才能比。
+			("reverse_ablation.n_cells", "8"),
+			("reverse_ablation.cells_with_three_seeds", "8"),
+		],
+	),
+]
+
+
 def main() -> int:
 	parser = argparse.ArgumentParser()
 	parser.add_argument("--suite-dir", default="reports/v2_fc_paper_suite")
+	parser.add_argument("--gate-numbers", default="reports/aaai27_gate_numbers.json",
+		help="extract_aaai27_gate_numbers.py 的产物；缺失时只跳过 §1–§6 那几组")
 	args = parser.parse_args()
 
 	suite = Path(args.suite_dir)
@@ -146,6 +200,22 @@ def main() -> int:
 				bad += 1
 			print(f"  {key:<62} 稿件={expected:<9} suite={fmt(value)}{mark}")
 		print()
+
+	gate_path = Path(args.gate_numbers)
+	if gate_path.is_file():
+		gate_numbers = json.loads(gate_path.read_text())
+		for title, keys in GATE_GROUPS:
+			print(f"=== {title}")
+			for key, expected in keys:
+				value = get(gate_numbers, key)
+				mark = ""
+				if value is None:
+					mark = "  <== 缺失"
+					bad += 1
+				print(f"  {key:<62} 稿件={expected:<9} suite={fmt(value)}{mark}")
+			print()
+	else:
+		print(f"=== §1–§6 跳过：{gate_path} 不存在（先跑 extract_aaai27_gate_numbers.py）\n")
 
 	print(f"缺失键数量: {bad}")
 	return 0

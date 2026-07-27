@@ -1,0 +1,79 @@
+{
+  "stages": [
+    {
+      "stage": "aaai27_gate_reselection",
+      "status": "ok",
+      "n_rows": 3,
+      "n_runs": 3,
+      "aggregate": "reports/aaai27_gate_reselection/aggregate.tsv"
+    },
+    {
+      "stage": "aaai27_gate_baselines",
+      "status": "ok",
+      "n_rows": 840,
+      "n_runs": 3,
+      "seeds": "13,23,7",
+      "aggregate": "reports/aaai27_gate_baselines/aggregate.tsv",
+      "by_seed": "reports/aaai27_gate_baselines/aggregate_by_seed.tsv"
+    },
+    {
+      "stage": "aaai27_gate_dynamics",
+      "status": "ok",
+      "n_rows": 1404,
+      "n_runs": 3,
+      "seeds": "13,23,7",
+      "aggregate": "reports/aaai27_gate_dynamics/aggregate.tsv",
+      "by_seed": "reports/aaai27_gate_dynamics/aggregate_by_seed.tsv"
+    },
+    {
+      "stage": "aaai27_transient_faults",
+      "status": "ok",
+      "n_rows": 1608,
+      "n_runs": 3,
+      "seeds": "13,23,7",
+      "aggregate": "reports/aaai27_transient_faults/aggregate.tsv",
+      "by_seed": "reports/aaai27_transient_faults/aggregate_by_seed.tsv"
+    },
+    {
+      "stage": "aaai27_paired_analysis",
+      "status": "ok",
+      "n_rows": 216,
+      "n_runs": 1,
+      "seeds": "13,23,7",
+      "aggregate": "reports/aaai27_paired_analysis/aggregate.tsv",
+      "by_seed": "reports/aaai27_paired_analysis/aggregate_by_seed.tsv"
+    },
+    {
+      "stage": "aaai27_reverse_ablation",
+      "status": "ok",
+      "n_rows": 684,
+      "n_runs": 1,
+      "seeds": "13,23,7",
+      "aggregate": "reports/aaai27_reverse_ablation/aggregate.tsv",
+      "by_seed": "reports/aaai27_reverse_ablation/aggregate_by_seed.tsv"
+    }
+  ],
+  "logs": [
+    "forecast_cell_driver.log",
+    "forecast_cell_seed13.log",
+    "forecast_cell_seed23.log",
+    "forecast_cell_seed7.log",
+    "gate_baselines_loo_seed13.log",
+    "gate_baselines_loo_seed23.log",
+    "gate_baselines_loo_seed7.log",
+    "gate_baselines_seed13.log",
+    "gate_baselines_seed23.log",
+    "gate_baselines_seed7.log",
+    "gate_dynamics_seed13.log",
+    "gate_dynamics_seed23.log",
+    "gate_dynamics_seed7.log",
+    "gate_reselection_seed13.log",
+    "gate_reselection_seed23.log",
+    "gate_reselection_seed7.log",
+    "paired_analysis.log",
+    "transient_faults_seed13.log",
+    "transient_faults_seed23.log",
+    "transient_faults_seed7.log"
+  ],
+  "problems": []
+}

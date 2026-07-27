@@ -23,6 +23,11 @@ reports/*
 # 已入库的两个 smoke 报告继续保留。
 !reports/reliability_human/
 !reports/reliability_smoke/
+# §1–§6 的压缩数字与流水线状态。缺 aaai27_gate_numbers.json 时
+# check_paper_numbers.py 会整段跳过 §1–§6 并仍然报「缺失键数量: 0」，
+# 在别的机器上就成了没验过却看着通过。两个文件加起来约 1 MB，无 checkpoint。
+!reports/aaai27_gate_numbers.json
+!reports/aaai27_suite_status.json
 
 # Packaged artifacts rebuilt by scripts/package_aaai_metrics.sh and the zip step
 aaai27_metrics.tar.gz
