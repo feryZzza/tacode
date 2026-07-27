@@ -76,11 +76,26 @@ npz 由 `../scripts/export_timeseries.py` 从 checkpoint 重放单个窗口导�
 
 四张全宽图按 AAAI 正文宽度 7.0 in（`figure*`）出，`fig_stress_transfer` 按单栏 3.35 in（`figure`）出。
 
-## 待办：需要在服务器上跑（本地无 checkpoint，只有 suite 汇总）
+## 已完成：服务器侧的 S1 / S2（2026-07-27）
 
-两项来自模拟审稿的核心意见，本地做不了：`reports/` 里只有 `v2_fc_paper_suite` 的聚合表，
-逐 run 的 `reliability_report.json` 和 `reliability_tcn_best.pt` 都在服务器上。两项都是
-**纯 eval**，复用现成 checkpoint，不用重训（`RESULTS_PROVENANCE.md` 末节：别删主 checkpoint）。
+两项都做完了，全部 `v2_fc_*` 已按新口径重评一遍（纯 eval，复用现成 checkpoint，没有重训；
+`RESULTS_PROVENANCE.md` 末节的「别删主 checkpoint」依然有效）。落地情况：
+
+| 项 | 代码落点 | 状态 |
+| --- | --- | --- |
+| S1 `E_wrong` | `reliability/metrics.py:441`（能量）与 `:448`（返回 `*_wrong_energy`） | 已进汇总与正文 §Safety--Utility |
+| S1 峰值 / jerk | 同一函数已有的 `peak_wrong_torque`、`mean_abs_jerk`，补进 `summarize_reliability_suite.py` | 已有数字支撑 |
+| S2 Detector-online | `run_reliability_experiment.py:585` `select_detector_signals_on_val` 在 `K_gate` 内**重选**一次（不是事后过滤），`--detector-online-signals` 给候选池 | 摘要与主结论已改用 online |
+| S2 出图 | `draw_aaai_figures.py` 检测热图多一列融合口径；图 5(a) 实心 = all、空心 = online | 已重出 |
+
+重跑规模 44 份报告（main / baseline / ablation × 3 seed、stress × 3 seed、loso 15 折）。
+运行时踩到的坑记一笔：eval 进程按 256 核推 OMP 线程池，每进程 135 线程，22 个并发就是
+3232 线程抢 256 核，表现为「进程在跑但一份报告都不落地」。派发前必须
+`export OMP_NUM_THREADS=8 MKL_NUM_THREADS=8 OPENBLAS_NUM_THREADS=8 NUMEXPR_NUM_THREADS=8`，
+`refresh_forecast_suite.sh` 自身不设线程数。另外 `SKIP_COMPLETED=1` 只判文件存在、不判新鲜度，
+换口径重评时要显式传 `SKIP_COMPLETED=0`。
+
+下面保留两项的原始需求描述，便于复核当初的验收标准。
 
 ### S1 —— 补 wrong-direction 能量指标 `E_wrong`
 
@@ -141,4 +156,19 @@ done
 - 确认页数符合 AAAI-27 限制，浮动体没有跑到章节外。
 - 不要修改官方 `.sty` / `.bst`。
 
-以上三项需要本地 TeX 发行版。当前开发机未安装 TeX Live，这三项**尚未验证**。
+**页数规则（官方投稿说明）**：正文最多 7 页，第 8–9 页只能放参考文献，
+全文不超过 9 页；伦理声明算在 7 页正文内，附录另投 Supplementary Document
+（正文 7 月 28 日截稿，附录 7 月 31 日）。
+
+开发机已装 TinyTeX，前三项现已本机验证：
+
+```bash
+export PATH=$HOME/bin:$HOME/.TinyTeX/bin/x86_64-linux:$PATH
+make            # 英文，pdflatex
+make zh         # 中文，xelatex
+```
+
+当前编译结果：英文 8 页（正文 1–7 页，参考文献从第 8 页开始），overfull 0、
+underfull hbox 0、undefined 0、error 0；中文 14 页、四项全 0。
+验收方式见 `RESULTS_PROVENANCE.md`「7 页版面合规」一节——只数「第 8 页有没有正文词」，
+不要用词数系数估算。

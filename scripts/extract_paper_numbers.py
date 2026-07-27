@@ -188,20 +188,36 @@ def main() -> None:
 			for _, report in mains:
 				by_seed[report["args"].get("seed")] = detector_macro(report["results"], "fault_auroc", (split,), faults)
 			detection[f"macro_fused_auroc.{split}.{label}"] = collect(by_seed)
+			# Detector-online：候选集限制在 K_gate 六路（门控实际可用）。摘要与主结论用这一组。
+			online_by_seed = {}
+			for _, report in mains:
+				online_by_seed[report["args"].get("seed")] = detector_macro(
+					report["results"], "fault_auroc_online", (split,), faults
+				)
+			if any(value is not None for value in online_by_seed.values()):
+				detection[f"macro_online_auroc.{split}.{label}"] = collect(online_by_seed)
 	# 逐 fault 的 fused AUROC 与最强单通道，供 Discussion 里的 hardest fault 用。
 	per_fault: dict[str, Any] = {}
 	for split in SPLITS:
 		for fault in ALL_FAULTS:
 			by_seed = {}
+			online_by_seed = {}
 			signals: dict[str, list[float]] = {}
 			for _, report in mains:
 				metrics = report["results"].get(f"fault_detection/{split}/{fault}", {})
 				if isinstance(metrics.get("fault_auroc"), (int, float)):
 					by_seed[report["args"].get("seed")] = float(metrics["fault_auroc"])
+				if isinstance(metrics.get("fault_auroc_online"), (int, float)):
+					online_by_seed[report["args"].get("seed")] = float(metrics["fault_auroc_online"])
 				for key, value in metrics.items():
+					# auroc_online 是融合口径，不是单通道，不能混进 signal_means。
+					if key == "auroc_online":
+						continue
 					if key.startswith("auroc_") and isinstance(value, (int, float)):
 						signals.setdefault(key[len("auroc_"):], []).append(float(value))
 			entry = collect(by_seed)
+			if online_by_seed:
+				entry["online"] = collect(online_by_seed)
 			entry["signal_means"] = {k: statistics.mean(v) for k, v in sorted(signals.items())}
 			if entry["signal_means"]:
 				entry["strongest_signal"] = max(entry["signal_means"], key=entry["signal_means"].get)
@@ -217,6 +233,14 @@ def main() -> None:
 			for field, alias in (
 				("baseline_wrong_direction_ratio", "wrong_ungated"),
 				("gated_wrong_direction_ratio", "wrong_gated"),
+				# E_wrong 能量口径 + 峰值反向力矩 + 指令 jerk：正文 Safety--Utility 那句
+				# 「Peak wrong torque and command jerk follow the same comparison」要有数。
+				("baseline_wrong_energy", "wrong_energy_ungated"),
+				("gated_wrong_energy", "wrong_energy_gated"),
+				("baseline_peak_wrong_torque", "peak_wrong_ungated"),
+				("gated_peak_wrong_torque", "peak_wrong_gated"),
+				("baseline_mean_abs_jerk", "jerk_ungated"),
+				("gated_mean_abs_jerk", "jerk_gated"),
 				("mean_gate", "mean_gate"),
 			):
 				by_seed = {}
@@ -375,13 +399,16 @@ def main() -> None:
 	stress: dict[str, Any] = {}
 	for scenario in ("packet_loss@0.30", "sensor_delay@20"):
 		for split in SPLITS:
-			auroc, ret, wrong = {}, {}, {}
+			auroc, online, ret, wrong = {}, {}, {}, {}
 			for _, report in stress_reports:
 				seed = report["args"].get("seed")
 				results = report["results"]
 				det = results.get(f"fault_detection/{split}/{scenario}", {})
 				if isinstance(det.get("fault_auroc"), (int, float)):
 					auroc[seed] = float(det["fault_auroc"])
+				# 极值点在两个融合口径下差异最大（延迟类），正文两个都报。
+				if isinstance(det.get("fault_auroc_online"), (int, float)):
+					online[seed] = float(det["fault_auroc_online"])
 				metrics = results.get(f"{split}/{scenario}", {})
 				g = metrics.get("gated_retained_aligned_torque")
 				u = metrics.get("baseline_retained_aligned_torque")
@@ -392,6 +419,7 @@ def main() -> None:
 				if isinstance(ung, (int, float)) and isinstance(gat, (int, float)):
 					wrong[seed] = gat - ung
 			stress[f"{split}/{scenario}.fused_auroc"] = collect(auroc)
+			stress[f"{split}/{scenario}.online_auroc"] = collect(online)
 			stress[f"{split}/{scenario}.retained_ratio"] = collect(ret)
 			stress[f"{split}/{scenario}.wrong_delta"] = collect(wrong)
 	out["stress_max_severity"] = stress

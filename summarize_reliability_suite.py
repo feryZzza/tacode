@@ -53,6 +53,19 @@ RUN_FIELDS = [
 	"gate_wrong_delta",
 	"nature_wrong",
 	"wrong_delta",
+	# 能量口径 E_wrong（Nm/kg·s）：比例口径分不清「一步大反向」和「多步小反向」。
+	"our_wrong_energy",
+	"our_ungated_wrong_energy",
+	"gate_wrong_energy_delta",
+	"nature_wrong_energy",
+	"wrong_energy_delta",
+	# 峰值反向力矩与指令 jerk 早就算好了，只是此前没带进汇总表。
+	"our_peak_wrong",
+	"our_ungated_peak_wrong",
+	"nature_peak_wrong",
+	"our_jerk",
+	"our_ungated_jerk",
+	"nature_jerk",
 	"our_retained",
 	"our_ungated_retained",
 	"gate_retained_delta",
@@ -71,6 +84,8 @@ DETECTOR_FUSION_GAP_WARN = 0.10
 
 DETECTOR_FIELDS = [
 	"auroc",
+	# Detector-online：候选集限制在 K_gate（门控实际可用的六路）时的融合 AUROC。
+	"auroc_online",
 	"best_signal_auroc",
 	"auroc_logit",
 	"auroc_aleatoric",
@@ -380,6 +395,9 @@ def make_comparison_row(
 ) -> dict[str, Any]:
 	ungated_wrong = ours.get("baseline_wrong_direction_ratio")
 	gated_wrong = ours.get("gated_wrong_direction_ratio")
+	ungated_energy = ours.get("baseline_wrong_energy")
+	gated_energy = ours.get("gated_wrong_energy")
+	nature_energy = baseline.get("baseline_wrong_energy")
 	ungated_retained = ours.get("baseline_retained_aligned_torque")
 	gated_retained = ours.get("gated_retained_aligned_torque")
 	nature_retained = baseline.get("baseline_retained_aligned_torque")
@@ -397,6 +415,17 @@ def make_comparison_row(
 		"gate_wrong_delta": delta(gated_wrong, ungated_wrong),
 		"nature_wrong": baseline.get("baseline_wrong_direction_ratio"),
 		"wrong_delta": delta(gated_wrong, baseline.get("baseline_wrong_direction_ratio")),
+		"our_wrong_energy": gated_energy,
+		"our_ungated_wrong_energy": ungated_energy,
+		"gate_wrong_energy_delta": delta(gated_energy, ungated_energy),
+		"nature_wrong_energy": nature_energy,
+		"wrong_energy_delta": delta(gated_energy, nature_energy),
+		"our_peak_wrong": ours.get("gated_peak_wrong_torque"),
+		"our_ungated_peak_wrong": ours.get("baseline_peak_wrong_torque"),
+		"nature_peak_wrong": baseline.get("baseline_peak_wrong_torque"),
+		"our_jerk": ours.get("gated_mean_abs_jerk"),
+		"our_ungated_jerk": ours.get("baseline_mean_abs_jerk"),
+		"nature_jerk": baseline.get("baseline_mean_abs_jerk"),
 		"our_retained": gated_retained,
 		"our_ungated_retained": ungated_retained,
 		"gate_retained_delta": delta(gated_retained, ungated_retained),
@@ -417,8 +446,10 @@ def build_detector_rows(reports: list[dict[str, Any]]) -> list[dict[str, Any]]:
 		for key, metrics in sorted(report.get("results", {}).items()):
 			if key.startswith("fault_detection/"):
 				auroc = metrics.get("fault_auroc")
+				auroc_online = metrics.get("fault_auroc_online")
 			elif key == "ood_detection/clean":
 				auroc = metrics.get("risk_auroc")
+				auroc_online = metrics.get("risk_auroc_online")
 			else:
 				continue
 			best_signal, best_signal_auroc = detector_best_signal(metrics)
@@ -427,6 +458,7 @@ def build_detector_rows(reports: list[dict[str, Any]]) -> list[dict[str, Any]]:
 					**report_metadata(report),
 					"detector": key,
 					"auroc": auroc,
+					"auroc_online": auroc_online,
 					"best_signal": metrics.get("best_signal", best_signal),
 					"best_signal_auroc": metrics.get("best_signal_auroc", best_signal_auroc),
 					# 每路信号 AUROC（E1/E2 对比：监督 logit vs 重构残差 vs 预测残差 vs 认知不确定性）。
@@ -656,7 +688,10 @@ def render_gap_report(
 		signals = ",".join(detector_policy.get("signals", [])) or "all"
 		validation = detector_policy.get("validation_aurocs", {})
 		validation_text = ", ".join(f"{name}={format_value(value)}" for name, value in validation.items())
-		lines.append(f"- signals={signals}; source={detector_policy.get('policy_source', 'unknown')}")
+		lines.append(f"- Detector-all signals={signals}; source={detector_policy.get('policy_source', 'unknown')}")
+		online_signals = ",".join(detector_policy.get("online_signals", []) or []) or "n/a"
+		online_pool = ",".join(detector_policy.get("online_candidate_pool", []) or []) or "n/a"
+		lines.append(f"- Detector-online signals={online_signals}; candidate pool (K_gate)={online_pool}")
 		if validation_text:
 			lines.append(f"- validation AUROC: {validation_text}")
 	else:

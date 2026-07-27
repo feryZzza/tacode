@@ -139,6 +139,15 @@ def parse_args() -> argparse.Namespace:
 		help="Validation-only fault set used to select the compact detector fusion.",
 	)
 	parser.add_argument("--detector-max-signals", type=int, default=3)
+	parser.add_argument(
+		"--detector-online-signals",
+		default="logit,aleatoric,residual,forecast,epistemic,staleness",
+		help=(
+			"Candidate pool for the Detector-online fusion (K_gate: channels the command-time gate "
+			"can actually use; coherence/drift are excluded). Reported as *_auroc_online alongside "
+			"the eight-channel Detector-all fusion."
+		),
+	)
 	parser.add_argument("--log-interval", type=int, default=25, help="Batch interval for line-mode progress. 0 disables live progress.")
 	parser.add_argument("--progress-style", choices=["auto", "bar", "line", "off"], default="auto", help="Live training progress display.")
 	parser.add_argument("--print-json-results", action="store_true", help="Print the full results JSON to stdout.")
@@ -516,8 +525,11 @@ def evaluate_all(
 	args.selected_gate_softness = gate_softness
 	args.selected_gate_deadband = gate_deadband
 	results["_gate_policy"] = {"softness": gate_softness, "deadband": gate_deadband, **gate_policy_info}
-	detector_signals, detector_policy_info = select_detector_signals_on_val(model, datasets, groups, args, device, risk_refs)
+	detector_signals, online_detector_signals, detector_policy_info = select_detector_signals_on_val(
+		model, datasets, groups, args, device, risk_refs
+	)
 	args.selected_detector_signals = ",".join(detector_signals)
+	args.selected_online_detector_signals = ",".join(online_detector_signals)
 	results["_detector_policy"] = detector_policy_info
 	for split_name, dataset in datasets.items():
 		# val_ood 仅用于 deadband 标定，不作为评估场景报告（避免泄漏式自评 + 报告膨胀）。
@@ -545,14 +557,27 @@ def evaluate_all(
 				continue
 			clean = collect_detector_scores(model, dataset, groups, args, device, "clean")
 			faulty = collect_detector_scores(model, dataset, groups, args, device, fault_name)
-			detector_metrics = detector_aurocs(clean, faulty, risk_refs, signal_names=detector_signals)
+			detector_metrics = detector_aurocs(
+					clean,
+					faulty,
+					risk_refs,
+					signal_names=detector_signals,
+					online_signal_names=online_detector_signals,
+				)
 			if detector_metrics:
 				results[f"fault_detection/{split_name}/{fault_name}"] = detector_metrics
 
 	if "test_id" in datasets and "test_ood" in datasets and len(datasets["test_ood"]) > 0:
 		id_scores = collect_detector_scores(model, datasets["test_id"], groups, args, device, "clean")
 		ood_scores = collect_detector_scores(model, datasets["test_ood"], groups, args, device, "clean")
-		results["ood_detection/clean"] = detector_aurocs(id_scores, ood_scores, risk_refs, primary_key="risk_auroc")
+		results["ood_detection/clean"] = detector_aurocs(
+			id_scores,
+			ood_scores,
+			risk_refs,
+			primary_key="risk_auroc",
+			# 保持既有口径：risk_auroc 用全部可用通道融合（不套冻结子集）。
+			online_signal_names=online_detector_signals,
+		)
 	if _parse_csv(args.gate_softness_grid):
 		results.update(evaluate_gate_sweep(model, datasets, groups, args, device, uncertainty_ref, risk_refs))
 	return results
@@ -565,10 +590,17 @@ def select_detector_signals_on_val(
 	args: argparse.Namespace,
 	device: torch.device,
 	refs: Optional[Dict[str, float]],
-) -> tuple[List[str], Dict[str, object]]:
+) -> tuple[List[str], List[str], Dict[str, object]]:
+	online_pool = _parse_csv(args.detector_online_signals)
 	if "val" not in datasets:
 		signals = ["logit", "aleatoric", "residual", "forecast", "epistemic", "staleness", "coherence", "drift"]
-		return signals, {"policy_source": "all_available_no_val_split", "signals": signals}
+		online = [name for name in signals if name in set(online_pool)] or signals
+		return signals, online, {
+			"policy_source": "all_available_no_val_split",
+			"signals": signals,
+			"online_signals": online,
+			"online_candidate_pool": online_pool,
+		}
 	saved_mc_samples = args.mc_samples
 	args.mc_samples = 0
 	try:
@@ -580,9 +612,19 @@ def select_detector_signals_on_val(
 		}
 	finally:
 		args.mc_samples = saved_mc_samples
-	signals, info = select_detector_signal_subset(clean, faults, refs, max_signals=max(args.detector_max_signals, 1))
+	max_signals = max(args.detector_max_signals, 1)
+	signals, info = select_detector_signal_subset(clean, faults, refs, max_signals=max_signals)
+	# Detector-online：同一批 val 分数，候选集限制在 K_gate（门控实际能用的通道）里重选一次。
+	online_signals, online_info = select_detector_signal_subset(
+		clean, faults, refs, max_signals=max_signals, candidate_pool=online_pool
+	)
 	info["selection_mc_samples"] = 0
-	return signals, info
+	info["online_signals"] = online_signals
+	info["online_candidate_pool"] = online_pool
+	info["online_policy_source"] = online_info.get("policy_source")
+	info["online_selection_score"] = online_info.get("selection_score")
+	info["online_validation_aurocs"] = online_info.get("validation_aurocs")
+	return signals, online_signals, info
 
 
 def detector_aurocs(
@@ -591,8 +633,14 @@ def detector_aurocs(
 	refs: Optional[Dict[str, float]],
 	primary_key: str = "fault_auroc",
 	signal_names: Optional[Iterable[str]] = None,
+	online_signal_names: Optional[Iterable[str]] = None,
 ) -> Dict[str, float]:
-	"""对每路信号和融合分数分别计算 clean-vs-fault AUROC。"""
+	"""对每路信号和融合分数分别计算 clean-vs-fault AUROC。
+
+	signal_names 是 Detector-all（八路候选里选出的冻结子集）；online_signal_names 给出
+	Detector-online（候选限制在 K_gate 六路），结果写成 f"{primary_key}_online"。
+	两者共用同一批已采集的分数，只是融合口径不同，额外开销可以忽略。
+	"""
 	metrics: Dict[str, float] = {}
 	for name in ("logit", "aleatoric", "residual", "forecast", "epistemic", "staleness", "coherence", "drift"):
 		if name in clean and name in faulty and clean[name].numel() and faulty[name].numel():
@@ -608,12 +656,15 @@ def detector_aurocs(
 		best_signal, best_score = max(signal_scores, key=lambda item: item[1])
 		metrics["best_signal"] = best_signal
 		metrics["best_signal_auroc"] = best_score
-	combined_clean = combined_detector_score(clean, refs, signal_names)
-	combined_fault = combined_detector_score(faulty, refs, signal_names)
-	if combined_clean.numel() and combined_fault.numel():
-		scores = torch.cat([combined_clean, combined_fault])
-		labels = torch.cat([torch.zeros_like(combined_clean), torch.ones_like(combined_fault)])
-		metrics[primary_key] = binary_auroc(scores, labels)
+	for key, names in ((primary_key, signal_names), (f"{primary_key}_online", online_signal_names)):
+		if names is None and key.endswith("_online"):
+			continue
+		combined_clean = combined_detector_score(clean, refs, names)
+		combined_fault = combined_detector_score(faulty, refs, names)
+		if combined_clean.numel() and combined_fault.numel():
+			scores = torch.cat([combined_clean, combined_fault])
+			labels = torch.cat([torch.zeros_like(combined_clean), torch.ones_like(combined_fault)])
+			metrics[key] = binary_auroc(scores, labels)
 	return metrics
 
 
@@ -1220,12 +1271,19 @@ def select_detector_signal_subset(
 	faults: Dict[str, Dict[str, torch.Tensor]],
 	refs: Optional[Dict[str, float]],
 	max_signals: int = 3,
+	candidate_pool: Optional[Iterable[str]] = None,
 ) -> tuple[List[str], Dict[str, object]]:
-	"""Select a compact detector fusion using validation clean/fault labels only."""
+	"""Select a compact detector fusion using validation clean/fault labels only.
+
+	candidate_pool 限制搜索空间。Detector-online 用它把候选压到 K_gate 六路
+	（coherence/drift 不参与 command-time 门控，见 reliability_metrics_from_outputs
+	里 calibrate_risk(drift=None)），使检测器成绩和门控实际可用的信号同口径。
+	"""
+	pool = set(candidate_pool) if candidate_pool is not None else None
 	available = [
 		name
 		for name in ("logit", "aleatoric", "residual", "forecast", "epistemic", "staleness", "coherence", "drift")
-		if name in clean and all(name in scores for scores in faults.values())
+		if name in clean and all(name in scores for scores in faults.values()) and (pool is None or name in pool)
 	]
 	if not available or not faults:
 		return available, {"policy_source": "all_available_no_validation_faults"}
@@ -1259,6 +1317,7 @@ def select_detector_signal_subset(
 		"selection_score": best_score,
 		"validation_aurocs": best_aurocs,
 		"max_signals": max_signals,
+		"candidate_pool": sorted(pool) if pool is not None else None,
 	}
 
 

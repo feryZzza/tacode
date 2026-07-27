@@ -30,6 +30,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.colors import LinearSegmentedColormap, TwoSlopeNorm
 from matplotlib.patches import FancyArrowPatch, FancyBboxPatch
+import matplotlib.transforms as mtransforms
 import numpy as np
 
 FULL_WIDTH = 7.0
@@ -91,11 +92,12 @@ FALLBACK: dict[str, Any] = {
 		"retained": (0.989, 0.983, 0.989, 0.878, 0.916),
 		"wrong_delta": (0.0, 0.0, 0.0, -0.00667, -0.00403),
 	},
+	# 末位是 Detector-online AUROC；回退路径不编造该值，留 None（面板只画 all）。
 	"stress": [
-		("packet loss 0.30", "ID", 0.961, 0.939, -0.0007),
-		("packet loss 0.30", "OOD", 0.914, 0.938, -0.0080),
-		("fixed delay 20", "ID", 0.899, 0.751, -0.0132),
-		("fixed delay 20", "OOD", 0.788, 0.933, -0.0230),
+		("packet loss 0.30", "ID", 0.961, 0.939, -0.0007, None),
+		("packet loss 0.30", "OOD", 0.914, 0.938, -0.0080, None),
+		("fixed delay 20", "ID", 0.899, 0.751, -0.0132, None),
+		("fixed delay 20", "OOD", 0.788, 0.933, -0.0230, None),
 	],
 	# LOSO 没有可信的硬编码回退：折数不足时面板 (b) 留空，而不是画一组假的分布。
 	"loso": None,
@@ -210,7 +212,12 @@ def resolve_detection(suite: Suite) -> tuple[dict[str, dict[str, float]], dict[s
 		row = by_key.get(f"{split}/{fault}")
 		if row is None:
 			break
-		entry = {"fused": as_float(row.get("fused_mean"))}
+		entry = {
+			"fused": as_float(row.get("fused_mean")),
+			# Detector-online：候选集限制在 K_gate 六路。旧 suite 没有这一列时为 None，
+			# 单元格留空（imshow 用 nan），不触发 fallback。
+			"fused_online": as_float(row.get("fused_online_mean")),
+		}
 		for signal in SIGNAL_COLUMNS:
 			entry[signal] = as_float(row.get(f"{signal}_mean"))
 		if entry["fused"] is None:
@@ -240,10 +247,31 @@ def resolve_detection(suite: Suite) -> tuple[dict[str, dict[str, float]], dict[s
 				values = [v for v in values if v is not None]
 				if values:
 					macro[f"{split_key}_{group}"] = float(np.mean(values))
+	# Detector-online 的 macro：摘要与主结论用这一组（K_gate 六路候选）。
+	online: dict[str, float] = {}
+	for split_key, split in (("id", "test_id"), ("ood", "test_ood")):
+		for group in ("seen", "unseen"):
+			value = stat(table.get(f"macro_online_auroc.{split}.{group}"))
+			if value is not None:
+				online[f"{split_key}_{group}"] = value
+	if len(online) < 4 and suite.detection:
+		for split_key, split in (("id", "test_id"), ("ood", "test_ood")):
+			for group, faults in (("seen", SEEN_FAULTS), ("unseen", UNSEEN_FAULTS)):
+				values = [
+					as_float(by_key[f"{split}/{f}"].get("fused_online_mean"))
+					for f in faults
+					if f"{split}/{f}" in by_key
+				]
+				values = [v for v in values if v is not None]
+				if len(values) == len(faults):
+					online[f"{split_key}_{group}"] = float(np.mean(values))
 	live_macro = len(macro) == 4
 	if not live_macro:
 		macro = dict(FALLBACK["macro_auroc"])
 	suite.note("macro", live_macro)
+	if len(online) == 4:
+		# 面板 b 与摘要口径一致：门控实际可用的检测器成绩。
+		macro = online
 	return cells, macro
 
 
@@ -316,9 +344,9 @@ def resolve_ablation(suite: Suite) -> dict[str, tuple]:
 	return {key: tuple(value) for key, value in FALLBACK["ablation"].items()}
 
 
-def resolve_stress(suite: Suite) -> list[tuple[str, str, float, float, float]]:
+def resolve_stress(suite: Suite) -> list[tuple[str, str, float, float, float, float | None]]:
 	table = suite.numbers.get("stress_max_severity", {})
-	rows: list[tuple[str, str, float, float, float]] = []
+	rows: list[tuple[str, str, float, float, float, float | None]] = []
 	plan = (
 		("packet loss 0.30", "ID", "test_id/packet_loss@0.30"),
 		("packet loss 0.30", "OOD", "test_ood/packet_loss@0.30"),
@@ -331,7 +359,9 @@ def resolve_stress(suite: Suite) -> list[tuple[str, str, float, float, float]]:
 		delta = stat(table.get(f"{key}.wrong_delta"))
 		if None in (auroc, retained, delta):
 			break
-		rows.append((label, split, auroc, retained, delta))
+		# 延迟类故障在两个融合口径下分化最大，只画 Detector-all 会高估门控可得的检测能力。
+		online = stat(table.get(f"{key}.online_auroc"))
+		rows.append((label, split, auroc, retained, delta, online))
 	live = len(rows) == len(plan)
 	if not live:
 		rows = [tuple(row) for row in FALLBACK["stress"]]  # type: ignore[misc]
@@ -464,7 +494,7 @@ def draw_method_overview(path_stem: Path, formats: list[str], series: dict[str, 
 	# 面板 c 带右轴 + 双 y 标签，默认间距会让标题和轴标签互相压住。
 	# 面板 b 的框宽按实测文字宽度排布（见下），三档等宽时排不下，所以多分一点给它。
 	fig, axes = plt.subplots(
-		1, 3, figsize=(FULL_WIDTH, 1.95), gridspec_kw={"width_ratios": [0.88, 1.32, 0.96], "wspace": 0.34}
+		1, 3, figsize=(FULL_WIDTH, 1.64), gridspec_kw={"width_ratios": [0.88, 1.32, 0.96], "wspace": 0.34}
 	)
 	rng = np.random.default_rng(11)
 	t = np.arange(0, 400)
@@ -727,6 +757,102 @@ def assert_legends_inside_panels(fig) -> None:
 			)
 
 
+def assert_legends_clear_of_text(fig) -> None:
+	"""图例不能压在轴标签、面板标题、脚注或另一个图例上。
+
+	`assert_legends_inside_panels` 只查横向，注释里写明「纵向是有意的」——把图例放在
+	轴下方确实是有意的，但放多远没人量。图 5 从 2.80 in 压到 2.44 in 后，两个面板的
+	图例都退到了自己的 xlabel 上：(a) 的 "Detector-all AUROC" 压着
+	"AUROC · retained aligned torque"，(b) 的两条图例压着 "wrong-direction reduction
+	(pp)"，字叠字。四个守卫全过、退出码 0，只有看位图才发现。
+	所以纵向也要查，只是查的对象换成「图例与其他文字」而不是「图例与面板边框」。
+	"""
+	fig.canvas.draw()
+	renderer = fig.canvas.get_renderer()
+	legends = []
+	others = []
+	for ax in fig.axes:
+		legend = ax.get_legend()
+		if legend is not None:
+			label = ", ".join(t.get_text() for t in legend.get_texts())
+			# 量图例条目文字的并集，不用 legend.get_window_extent()：后者含 borderpad /
+			# handletextpad 的空白边，图例明明还差十来个像素才碰到 xlabel 就会误报。
+			# 判据要贴着「字压字」，否则守卫会逼着每张图都把图例推远，白掉版面。
+			boxes = [t.get_window_extent(renderer=renderer) for t in legend.get_texts()]
+			if not boxes:
+				continue
+			legends.append((label, mtransforms.Bbox.union(boxes)))
+		for artist in (ax.xaxis.label, ax.yaxis.label, ax.title):
+			if artist.get_text():
+				others.append((artist.get_text(), artist.get_window_extent(renderer=renderer)))
+	for text in fig.texts:
+		if text.get_text():
+			others.append((text.get_text()[:40], text.get_window_extent(renderer=renderer)))
+
+	# 余量按排版点给（1 pt = dpi/72 px）。写成像素常量在 300 dpi 下只有 0.24 pt，
+	# 图例外框与 xlabel 刚好相切也会被判成压字。
+	pad = 1.0 * fig.dpi / 72.0
+
+	def overlaps(a, b) -> bool:
+		return a.x1 > b.x0 + pad and b.x1 > a.x0 + pad and a.y1 > b.y0 + pad and b.y1 > a.y0 + pad
+
+	for i, (label, lb) in enumerate(legends):
+		for other_label, ob in others:
+			if overlaps(lb, ob):
+				raise RuntimeError(
+					f"图例 {label!r} 压在文字 {other_label!r} 上"
+					f"（图例 y=[{lb.y0:.0f},{lb.y1:.0f}]，文字 y=[{ob.y0:.0f},{ob.y1:.0f}]）；"
+					"请把 bbox_to_anchor 的 y 再降一些、加大 hspace 或缩短图例文案"
+				)
+		for other_label, ob in legends[i + 1:]:
+			if overlaps(lb, ob):
+				raise RuntimeError(f"图例 {label!r} 与图例 {other_label!r} 互相重叠；请加大 hspace")
+
+
+def assert_annotations_clear_of_other_panels(fig) -> None:
+	"""面板内的数据标注不能压到别的面板的文字上。
+
+	前面五个守卫查的都是「标签 vs 裁剪框」「标题 vs 标题」「图例 vs 文字」，唯独漏了
+	最常见的一类：`annotate` 出来的数值标签。它不受面板边框约束，居中标在末柱上时有
+	一半探出右边框——右邻面板的 ylabel 就贴在那儿。图 4 压到 1.62 in 后四个面板全中，
+	最窄处只差 0.5 pt，位图上是 `0.889` 和 `wrong-direction change (pp)` 叠成一团。
+	判据同样是「字压字」：本面板的 Text vs 其他面板的 ylabel / xlabel / 标题 /
+	刻度标签 / 数值标注。同面板内部不查——那是各图自己的避让逻辑（见 panel (a) 的
+	`reserve`/`free`），在这里查会把有意的紧凑排布判成缺陷。
+	"""
+	fig.canvas.draw()
+	renderer = fig.canvas.get_renderer()
+
+	def texts_of(ax, *, own: bool) -> list[tuple[str, Any]]:
+		items = [t for t in ax.texts if t.get_text()]
+		if not own:
+			for artist in (ax.xaxis.label, ax.yaxis.label, ax.title):
+				if artist.get_text():
+					items.append(artist)
+			items.extend(
+				label for axis in (ax.xaxis, ax.yaxis)
+				for label in axis.get_ticklabels() if label.get_text() and label.get_visible()
+			)
+		return [(t.get_text()[:40], t.get_window_extent(renderer=renderer)) for t in items]
+
+	pad = 1.0 * fig.dpi / 72.0
+	axes = list(fig.axes)
+	for i, ax in enumerate(axes):
+		mine = texts_of(ax, own=True)
+		for j, other in enumerate(axes):
+			if i == j:
+				continue
+			for label, box in mine:
+				for other_label, other_box in texts_of(other, own=False):
+					if (box.x1 > other_box.x0 + pad and other_box.x1 > box.x0 + pad
+							and box.y1 > other_box.y0 + pad and other_box.y1 > box.y0 + pad):
+						raise RuntimeError(
+							f"面板标注 {label!r} 压在邻面板的文字 {other_label!r} 上"
+							f"（标注 x=[{box.x0:.0f},{box.x1:.0f}]，被压 x=[{other_box.x0:.0f},{other_box.x1:.0f}]）；"
+							"请把标注右对齐到 ax.get_xlim()[1] 或加大 wspace"
+						)
+
+
 def assert_tight_within_canvas(fig) -> None:
 	"""`bbox="tight"` 的裁剪框不能比 figsize 宽。
 
@@ -748,6 +874,8 @@ def save(fig, path_stem: Path, formats: list[str]) -> None:
 	assert_no_clipping(fig)
 	assert_no_overlapping_titles(fig)
 	assert_legends_inside_panels(fig)
+	assert_legends_clear_of_text(fig)
+	assert_annotations_clear_of_other_panels(fig)
 	assert_tight_within_canvas(fig)
 	for fmt in formats:
 		fig.savefig(path_stem.with_suffix(f".{fmt}"), format=fmt)
@@ -793,12 +921,18 @@ def points_to_data(ax) -> tuple[float, float]:
 
 def draw_detection_taxonomy(path_stem: Path, formats: list[str], cells, macro) -> None:
 	fig, axes = plt.subplots(
-		1, 2, figsize=(FULL_WIDTH, 2.15), gridspec_kw={"width_ratios": [2.35, 1.0], "wspace": 0.30}
+		1, 2, figsize=(FULL_WIDTH, 1.70), gridspec_kw={"width_ratios": [2.35, 1.0], "wspace": 0.30}
 	)
 
 	ax = axes[0]
 	panel_tag(ax, "a", "Which signal sees which fault (AUROC)")
-	columns = ("fused", *SIGNAL_COLUMNS)
+	# 两列融合：Detector-all（八路候选，离线诊断上限）与 Detector-online（K_gate 六路，
+	# 门控实际可用）。旧 suite 缺 fused_online 时退成单列，不改其余布局逻辑。
+	has_online = any(entry.get("fused_online") is not None for entry in cells.values())
+	fusion_columns = ("fused", "fused_online") if has_online else ("fused",)
+	# 两个融合列的标签比信号列长得多，不断行会和相邻列的刻度标签叠印。
+	fusion_labels = ["Detector-\nall", "Detector-\nonline"] if has_online else ["Fused\ndetector"]
+	columns = (*fusion_columns, *SIGNAL_COLUMNS)
 	matrix = np.full((len(TAXONOMY_ROWS), len(columns)), np.nan)
 	for r, (split, fault, _, _) in enumerate(TAXONOMY_ROWS):
 		entry = cells[f"{split}/{fault}"]
@@ -816,17 +950,18 @@ def draw_detection_taxonomy(path_stem: Path, formats: list[str], cells, macro) -
 			shade = "#ffffff" if abs(value - 0.5) > 0.36 else "#202124"
 			ax.text(c, r, f"{value:.3f}".lstrip("0"), ha="center", va="center", fontsize=6.0, color=shade)
 	ax.set_xticks(range(len(columns)))
-	ax.set_xticklabels(["Fused\ndetector", *(SIGNAL_LABELS[s] for s in SIGNAL_COLUMNS)], fontsize=6.0)
+	ax.set_xticklabels([*fusion_labels, *(SIGNAL_LABELS[s] for s in SIGNAL_COLUMNS)], fontsize=6.0)
 	ax.set_yticks(range(len(TAXONOMY_ROWS)))
 	ax.set_yticklabels([f"{name}\n{tag}" for _, _, name, tag in TAXONOMY_ROWS], fontsize=6.0)
 	ax.tick_params(length=0)
 	for side in ("top", "right", "left", "bottom"):
 		ax.spines[side].set_visible(False)
 	# 竖线把「验证集选定的融合」和候选通道分开。
-	ax.axvline(0.5, color="#202124", lw=0.7)
-	# 左栏只有一列宽，注记右对齐贴到分隔线左侧，避免压线。
-	ax.text(0.42, -0.72, "validation-selected", ha="right", fontsize=5.2, color=GREY)
-	ax.text((len(columns) + 0.5) / 2, -0.72, "candidate integrity signals", ha="center", fontsize=5.6, color=GREY)
+	split_at = len(fusion_columns) - 0.5
+	ax.axvline(split_at, color="#202124", lw=0.7)
+	# 左栏注记右对齐贴到分隔线左侧，避免压线。
+	ax.text(split_at - 0.08, -0.72, "validation-selected", ha="right", fontsize=5.2, color=GREY)
+	ax.text((len(columns) + split_at) / 2, -0.72, "candidate integrity signals", ha="center", fontsize=5.6, color=GREY)
 	ax.set_ylim(len(TAXONOMY_ROWS) - 0.5, -0.95)
 
 	# 色带放到面板 a 的刻度标签之下，说明文字再放到色带之下，避免和列名撞在一起。
@@ -839,7 +974,7 @@ def draw_detection_taxonomy(path_stem: Path, formats: list[str], cells, macro) -
 	cax.text(127.5, 2.9, "below chance $\\leftarrow$ chance $\\rightarrow$ above chance", ha="center", va="top", fontsize=5.6, color=GREY)
 
 	ax = axes[1]
-	panel_tag(ax, "b", "Frozen detector, macro AUROC")
+	panel_tag(ax, "b", "Detector-online, macro AUROC" if has_online else "Frozen detector, macro AUROC")
 	groups = (("seen faults", "seen"), ("unseen generators", "unseen"))
 	for gi, (title, key) in enumerate(groups):
 		y = 1 - gi
@@ -875,8 +1010,14 @@ def draw_detection_taxonomy(path_stem: Path, formats: list[str], cells, macro) -
 		plt.Line2D([], [], marker="o", color=BLUE, markerfacecolor=BLUE, lw=0, markersize=4.0, label="in-distribution tasks"),
 		plt.Line2D([], [], marker="s", color=BLUE, markerfacecolor="#ffffff", lw=0, markersize=4.0, label="held-out tasks"),
 	]
-	ax.legend(handles=handles, loc="lower center", bbox_to_anchor=(0.5, -0.42), frameon=False, ncol=1, handlelength=1.0)
-	ax.text(0.5, -0.62, "3 seeds; detector subset and q90 scales\nfrozen on validation data.", transform=ax.transAxes, ha="center", fontsize=5.6, color=GREY)
+	# −0.42 时图例首行的字底与 xlabel 的字顶只差 2 px，PDF 里挤成一团；降到 −0.52。
+	ax.legend(handles=handles, loc="lower center", bbox_to_anchor=(0.5, -0.52), frameon=False, ncol=1, handlelength=1.0)
+	caption_note = (
+		"3 seeds; detector subset and q90 scales frozen on\nvalidation data, candidates limited to $K_{\\mathrm{gate}}$."
+		if has_online
+		else "3 seeds; detector subset and q90 scales\nfrozen on validation data."
+	)
+	ax.text(0.5, -0.62, caption_note, transform=ax.transAxes, ha="center", fontsize=5.6, color=GREY)
 	recessive(ax, grid_axis="x")
 	save(fig, path_stem, formats)
 
@@ -889,7 +1030,7 @@ def draw_safety_utility(path_stem: Path, formats: list[str], rows) -> None:
 	# 同一条标签在数据坐标里就越长，即使贴着自己的点放也会横跨到别的点上方。
 	# 所以 (b) 拿走最多宽度，(a)/(c) 只需容纳 y 轴文字和短数字。
 	fig, axes = plt.subplots(
-		1, 3, figsize=(FULL_WIDTH, 2.15), gridspec_kw={"width_ratios": [1.05, 1.42, 0.72], "wspace": 0.52}
+		1, 3, figsize=(FULL_WIDTH, 1.68), gridspec_kw={"width_ratios": [1.05, 1.42, 0.72], "wspace": 0.52}
 	)
 	labels = [row[0] for row in rows]
 	ungated = np.array([row[1] for row in rows])
@@ -1119,9 +1260,12 @@ def draw_wrong_delta_panel(ax, stages, wrong_delta, wrong_sd) -> None:
 			"gate never closes", (float(np.mean(zero)), 0.0), textcoords="offset points",
 			xytext=(0, 3), ha="center", va="bottom", fontsize=5.4, color=GREY,
 		)
+	# 这是最右侧面板，居中标注探出右边框不会压到别的面板，但会把 bbox="tight" 的裁剪框
+	# 撑宽（进而缩小 \includegraphics 的实际字号）。同样右对齐到边框内。
+	ax.set_xlim(0.45, 5.55)
 	ax.annotate(
-		f"{values[-1]:+.2f}", (stages[-1], values[-1] - (sd[-1] if sd is not None else 0.0)),
-		textcoords="offset points", xytext=(0, -3), ha="center", va="top", fontsize=6.0,
+		f"{values[-1]:+.2f}", (ax.get_xlim()[1], values[-1] - (sd[-1] if sd is not None else 0.0)),
+		textcoords="offset points", xytext=(-1, -3), ha="right", va="top", fontsize=6.0,
 	)
 	ax.set_xticks(stages)
 	ax.set_xticklabels(stages)
@@ -1131,7 +1275,7 @@ def draw_wrong_delta_panel(ax, stages, wrong_delta, wrong_sd) -> None:
 
 def draw_ablation_summary(path_stem: Path, formats: list[str], ablation) -> None:
 	fig, axes = plt.subplots(
-		1, 4, figsize=(FULL_WIDTH, 2.05), gridspec_kw={"width_ratios": [1.42, 0.74, 0.86, 0.74], "wspace": 0.52}
+		1, 4, figsize=(FULL_WIDTH, 1.62), gridspec_kw={"width_ratios": [1.42, 0.74, 0.86, 0.74], "wspace": 0.52}
 	)
 	stages = np.arange(1, 6)
 	auroc = np.array([v for v in ablation["auroc"]], dtype=float)
@@ -1194,12 +1338,25 @@ def draw_ablation_summary(path_stem: Path, formats: list[str], ablation) -> None
 			sd = float(auroc_sd[int(stage) - 1])
 			taken.append((stage - 2.5 * ptx, value - sd - 2.0 * pty, stage + 2.5 * ptx, value + sd + 2.0 * pty))
 	# 终点值放到点的右侧：末段差值也在附近，两者同侧会叠字。
+	# 但 ha="left" + 正偏移会让文字从右边框探出去，落到面板 (b) 的 ylabel 上（实测只差
+	# 0.7 pt 就叠字）。改成右对齐到边框内 2 pt：横向绝不越界。
+	# 右对齐之后横向占满 x=5.0–5.85，正好盖住末点的标记，所以纵向也得让位：和下面的
+	# 差值标签走同一套 free() 避让，撞了就往上/往下推，不再固定 va="center"。
 	end_text = f"{auroc[-1]:.3f}"
 	end_w, end_h = text_extent_in_data(ax, end_text, fontsize=6.0)
-	taken.append(reserve(stages[-1], auroc[-1], end_w, end_h, 7.0, -2.0, "left", "center"))
+	end_choice = None
+	for dy in (0.0, 8.0, -8.0, 14.0, -14.0, 20.0, -20.0):
+		va = "center" if dy == 0.0 else ("bottom" if dy > 0 else "top")
+		box = reserve(x_hi, auroc[-1], end_w, end_h, -2.0, dy, "right", va)
+		if free(box):
+			taken.append(box)
+			end_choice = (dy, va)
+			break
+	if end_choice is None:
+		raise RuntimeError(f"panel (a) 终点标签 {end_text!r} 找不到空位，请加宽面板或缩小字号")
 	ax.annotate(
-		end_text, (stages[-1], auroc[-1]), textcoords="offset points",
-		xytext=(7, -2), ha="left", va="center", fontsize=6.0,
+		end_text, (x_hi, auroc[-1]), textcoords="offset points",
+		xytext=(-2, end_choice[0]), ha="right", va=end_choice[1], fontsize=6.0,
 	)
 	# 相邻差值标在线段中点。固定「正数在上、负数在下」在末两段会撞上：那两段几乎水平、
 	# 中点又贴着终点值标签。改成沿垂直方向逐步找空位，撞了就再往外推。
@@ -1238,18 +1395,27 @@ def draw_ablation_summary(path_stem: Path, formats: list[str], ablation) -> None
 	if rmse_sd is not None:
 		ax.errorbar(stages, rmse, yerr=rmse_sd, fmt="none", ecolor="#202124", elinewidth=0.7, capsize=1.6, zorder=5)
 	ax.axhline(rmse[0], color=GREY, lw=0.6, ls="--", zorder=4)
-	# 有误差棒时数值要抬到棒顶之上，否则压在 cap 上。
-	rmse_top = float(rmse[-1] + (rmse_sd[-1] if rmse_sd is not None else 0.0))
-	ax.annotate(f"{rmse[-1]:.4f}", (stages[-1], rmse_top), textcoords="offset points", xytext=(0, 3), ha="center", fontsize=6.0)
 	ax.set_xticks(stages)
 	ax.set_xticklabels(stages)
 	ax.set_ylabel("clean OOD RMSE (Nm/kg)")
 	rmse_pad = rmse_sd if rmse_sd is not None else 0
-	ax.set_ylim(float(np.min(rmse - rmse_pad)) - 0.008, float(np.max(rmse + rmse_pad)) + 0.008)
+	rmse_hi = float(np.max(rmse + rmse_pad))
+	ax.set_ylim(float(np.min(rmse - rmse_pad)) - 0.008, rmse_hi + 0.008)
+	# 顶部再留一行字的高度：数值标注右对齐后横向占到第 4 根柱子上方，贴着末柱顶画会
+	# 盖住那根误差棒。抬到所有柱和棒之上当整条的右上角读数，横纵都不与数据相交。
+	_, rmse_text_h = text_extent_in_data(ax, f"{rmse[-1]:.4f}", fontsize=6.0)
+	ax.set_ylim(ax.get_ylim()[0], rmse_hi + 0.008 + 1.35 * rmse_text_h)
 	# 参考线注记先是横排压柱体，改竖排放到右侧留白后又被 (d) 挤窄的面板里那个
 	# 0.2545 数值标签压上。面板只有 0.74 份宽度，容不下第五根柱子 + 一列竖排文字，
 	# 所以虚线的含义交给图注（figure_note）说，面板里只留线。
 	ax.set_xlim(0.45, 5.55)
+	# 数值标注放在设定 xlim / ylim 之后，靠 get_xlim()/get_ylim() 取边框，不硬编码。
+	# ha="center" 会让 6 位数字的一半探出右边框、压到 (c) 的 ylabel 上（实测只差 0.5 pt），
+	# 所以右对齐到边框内 1 pt；纵向贴顶，落在上面为它腾出的那一行里。
+	ax.annotate(
+		f"{rmse[-1]:.4f}", (ax.get_xlim()[1], ax.get_ylim()[1]), textcoords="offset points",
+		xytext=(-1, -1), ha="right", va="top", fontsize=6.0,
+	)
 	recessive(ax, grid_axis="y")
 
 	# (c) retained aligned torque；阶段 1 无门控
@@ -1263,14 +1429,19 @@ def draw_ablation_summary(path_stem: Path, formats: list[str], ablation) -> None
 		ax.errorbar([s for s, _, _ in shown], [v for _, v, _ in shown], yerr=retained_sd[idx],
 		            fmt="none", ecolor="#202124", elinewidth=0.7, capsize=1.6, zorder=5)
 	if shown:
-		last_top = shown[-1][1] + (float(retained_sd[int(shown[-1][0]) - 1]) if retained_sd is not None else 0.0)
-		ax.annotate(f"{shown[-1][1]:.3f}", (shown[-1][0], last_top), textcoords="offset points", xytext=(0, 3), ha="center", fontsize=6.0)
 		values = [v for _, v, _ in shown]
 		spread = float(np.max(retained_sd)) if retained_sd is not None else 0.0
 		ax.set_ylim(min(values) - 0.03 - spread, max(values) + 0.03 + spread)
 	if retained[0] is None:
 		ax.text(1, ax.get_ylim()[0] + 0.004, "no gate", rotation=90, ha="center", va="bottom", fontsize=5.6, color=GREY)
-		ax.set_xlim(0.45, 5.55)
+	ax.set_xlim(0.45, 5.55)
+	if shown:
+		# 同 (b)：居中标注在末柱上会探出右边框，压到 (d) 的 ylabel 上（实测差 0.5 pt）。
+		last_top = shown[-1][1] + (float(retained_sd[int(shown[-1][0]) - 1]) if retained_sd is not None else 0.0)
+		ax.annotate(
+			f"{shown[-1][1]:.3f}", (ax.get_xlim()[1], last_top), textcoords="offset points",
+			xytext=(-1, 3), ha="right", va="bottom", fontsize=6.0,
+		)
 	ax.set_xticks(stages)
 	ax.set_xticklabels(stages)
 	ax.set_ylabel("retained torque")
@@ -1298,7 +1469,9 @@ def draw_ablation_summary(path_stem: Path, formats: list[str], ablation) -> None
 
 
 def draw_stress_transfer(path_stem: Path, formats: list[str], stress, loso_rows) -> None:
-	fig, axes = plt.subplots(2, 1, figsize=(COL_WIDTH, 3.05), gridspec_kw={"height_ratios": [1.12, 0.88], "hspace": 0.78})
+	# hspace 0.78 时 (a) 的图例底边离 (b) 的面板标题只有几个像素，守卫按 1 pt 余量放行但
+	# 读起来像连成一块。0.95 拉开一行的距离，图高不变。
+	fig, axes = plt.subplots(2, 1, figsize=(COL_WIDTH, 2.34), gridspec_kw={"height_ratios": [1.12, 0.88], "hspace": 0.95})
 
 	# (a) 最高强度点：AUROC 与保留比例共轴
 	ax = axes[0]
@@ -1307,7 +1480,7 @@ def draw_stress_transfer(path_stem: Path, formats: list[str], stress, loso_rows)
 	positions: list[float] = []
 	y = 0.0
 	last_group = None
-	for group, split, auroc, retained, delta in stress:
+	for group, split, auroc, retained, delta, online in stress:
 		if group != last_group:
 			if last_group is not None:
 				y -= 0.55
@@ -1318,6 +1491,14 @@ def draw_stress_transfer(path_stem: Path, formats: list[str], stress, loso_rows)
 		positions.append(y)
 		labels.append(split)
 		ax.plot(auroc, y, "o", markersize=4.2, color=BLUE, linestyle="none", zorder=3)
+		if online is not None:
+			# 空心圆 = Detector-online；与实心的 Detector-all 同轴，两者间距本身就是要传达的量。
+			# 填充必须透明而非白色：丢包两行两个口径逐位相同，白填充会把实心点整个盖掉，
+			# 看上去像 Detector-all 缺失。透明 + 略大半径 → 重合时是同心圆，分离时各自可读。
+			ax.plot(
+				online, y, "o", markersize=6.0, markerfacecolor="none",
+				markeredgecolor=BLUE, markeredgewidth=0.9, linestyle="none", zorder=4,
+			)
 		ax.plot(retained, y, "D", markersize=4.0, markerfacecolor="#ffffff", markeredgecolor=GREEN, markeredgewidth=0.8, linestyle="none", zorder=3)
 		# pp 标注统一贴右边界，避免跟着点走出坐标区。
 		ax.annotate(
@@ -1328,14 +1509,26 @@ def draw_stress_transfer(path_stem: Path, formats: list[str], stress, loso_rows)
 	ax.set_yticks(positions)
 	ax.set_yticklabels(labels)
 	ax.set_ylim(y + 0.5, 1.05)
-	ax.set_xlabel("fused AUROC $\\cdot$ retained aligned torque")
-	values = [v for _, _, a, r, _ in stress for v in (a, r)]
+	# 这个面板不设 xlabel：三条图例已经逐项写明横轴上画的是什么（Detector-all AUROC /
+	# Detector-online AUROC / retained torque），再加一行 "AUROC · retained aligned torque"
+	# 是同一件事说两遍，而且这张单栏图压到 2.44 in 后图例正好退到该标签上（压字 7.7 pt）。
+	# 删标签比把图例推远省版面，信息不减。
+	values = [v for _, _, a, r, _, o in stress for v in (a, r) if v is not None]
+	values += [o for _, _, _, _, _, o in stress if o is not None]
 	ax.set_xlim(min(values) - 0.03, max(values) + 0.075)
-	handles = [
-		plt.Line2D([], [], marker="o", color=BLUE, lw=0, markersize=4.0, label="fused AUROC"),
-		plt.Line2D([], [], marker="D", color=GREEN, markerfacecolor="#ffffff", lw=0, markersize=4.0, label="retained torque"),
-	]
-	ax.legend(handles=handles, loc="lower center", bbox_to_anchor=(0.5, -0.52), frameon=False, ncol=2, handlelength=1.0)
+	has_online = any(o is not None for *_, o in stress)
+	handles = [plt.Line2D([], [], marker="o", color=BLUE, lw=0, markersize=4.0, label="Detector-all AUROC")]
+	if has_online:
+		handles.append(plt.Line2D(
+			[], [], marker="o", color=BLUE, markerfacecolor="none", lw=0,
+			markersize=5.2, label="Detector-online AUROC",
+		))
+	handles.append(plt.Line2D([], [], marker="D", color=GREEN, markerfacecolor="#ffffff", lw=0, markersize=4.0, label="retained torque"))
+	# 三条图例横排会超出单栏面板宽（守卫 assert_legends_inside_panels 会拦），改两列。
+	ax.legend(
+		handles=handles, loc="lower center", bbox_to_anchor=(0.5, -0.62),
+		frameon=False, ncol=2 if has_online else 2, handlelength=1.0,
+	)
 	recessive(ax, grid_axis="x")
 
 	# (b) LOSO：逐折效应量 + bootstrap 均值与 95% CI
@@ -1374,8 +1567,9 @@ def draw_stress_transfer(path_stem: Path, formats: list[str], stress, loso_rows)
 	ax.set_xlim(-0.06 * span, span * 1.12)
 	# 两条图例并排时比这个单栏面板宽 39 px，右端 "CI" 越出边框。缩到 5.4 pt 后
 	# 宽 684 px，留得下余量；标签文案照旧，n 和置信水平都还写在图里。
+	# y 从 −0.62 降到 −0.92：这里的 xlabel 带单位，不能像 (a) 那样删，只能让图例落到它下面。
 	ax.legend(
-		loc="lower center", bbox_to_anchor=(0.5, -0.62), frameon=False, ncol=2,
+		loc="lower center", bbox_to_anchor=(0.5, -0.92), frameon=False, ncol=2,
 		handlelength=1.0, columnspacing=0.8, fontsize=5.4,
 	)
 	recessive(ax, grid_axis="x")

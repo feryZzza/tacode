@@ -436,12 +436,16 @@ def _torque_metrics_for_command(
 	active = valid & (ideal_abs > 0.02)
 	wrong = active & (command * ideal < 0.0)
 	wrong_values = command.abs()[wrong]
+	# E_wrong = Σ_{(j,t)∈A} max(0, −τ^cmd·τ*) · Δt，Δt = 1/sample_rate。
+	# 比例口径把「一步 0.45」和「一百步 0.01」判成后者更差，能量口径纠正这一点。
+	wrong_energy = torch.clamp(-(command * ideal), min=0.0)[active].sum() / sample_rate
 	aligned = torch.clamp(command * torch.sign(ideal), min=0.0)
 	retained = aligned[active].sum() / ideal_abs[active].sum().clamp_min(1e-6)
 	jerk = torch.diff(command, dim=-1) * sample_rate
 	jerk_valid = valid[..., 1:]
 	return {
 		f"{prefix}_wrong_direction_ratio": _safe_mean(wrong.float(), active),
+		f"{prefix}_wrong_energy": float(wrong_energy.detach().cpu()) if active.any() else 0.0,
 		f"{prefix}_peak_wrong_torque": float(wrong_values.max().detach().cpu()) if wrong_values.numel() else 0.0,
 		f"{prefix}_retained_aligned_torque": float(retained.detach().cpu()) if active.any() else float("nan"),
 		f"{prefix}_mean_abs_jerk": float(jerk.abs()[jerk_valid].mean().detach().cpu()) if jerk_valid.any() else float("nan"),

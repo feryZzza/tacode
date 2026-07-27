@@ -32,5 +32,6 @@
 
 ## Primary Detector Policy
 
-- signals=residual,staleness,coherence; source=validation_fault_subset_search
+- Detector-all signals=residual,staleness,coherence; source=validation_fault_subset_search
+- Detector-online signals=residual,staleness; candidate pool (K_gate)=logit,aleatoric,residual,forecast,epistemic,staleness
 - validation AUROC: insole_missing=0.8586, encoder_dropout=0.9111, imu_bias=0.5021, packet_loss=0.7741, sensor_delay=0.8357

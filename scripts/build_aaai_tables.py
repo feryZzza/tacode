@@ -87,6 +87,9 @@ def build_detection_rows(rows: list[dict[str, str]]) -> list[dict[str, object]]:
 				"n": int(float(row["n"])),
 				"fused_mean": number(row, "auroc_mean"),
 				"fused_std": number(row, "auroc_std"),
+				# Detector-online：候选集限制在 K_gate（门控可用的六路）后的融合 AUROC。
+				"fused_online_mean": number(row, "auroc_online_mean"),
+				"fused_online_std": number(row, "auroc_online_std"),
 			}
 			for signal in DISPLAY_SIGNALS:
 				out[f"{signal}_mean"] = number(row, f"auroc_{signal}_mean")
@@ -101,7 +104,9 @@ def render_detection_markdown(source_rows: list[dict[str, str]]) -> str:
 		"# Table I. Fault Detection AUROC",
 		"",
 		"Mean +/- std across three seeds. Held-out rows use fault generators excluded from training. "
-		"Channels are fixed by the detectability taxonomy; Fused is the frozen q90-max policy and coherence is causal.",
+		"Channels are fixed by the detectability taxonomy; Fused is the frozen q90-max policy and coherence is causal. "
+		"Detector-all searches all eight channels (offline diagnostic ceiling); Detector-online restricts the candidate "
+		"pool to K_gate, the six channels the command-time gate can actually consume.",
 	]
 	for split, title in (("test_id", "ID"), ("test_ood", "OOD")):
 		lines.extend(
@@ -109,8 +114,8 @@ def render_detection_markdown(source_rows: list[dict[str, str]]) -> str:
 				"",
 				f"## {title}",
 				"",
-				"| Fault | Fused (q90-max) | Logit | Residual | Forecast | Staleness | Coherence | Drift |",
-				"|---|---:|---:|---:|---:|---:|---:|---:|",
+				"| Fault | Detector-all | Detector-online | Logit | Residual | Forecast | Staleness | Coherence | Drift |",
+				"|---|---:|---:|---:|---:|---:|---:|---:|---:|",
 			]
 		)
 		for fault in FAULTS:
@@ -118,6 +123,7 @@ def render_detection_markdown(source_rows: list[dict[str, str]]) -> str:
 			cells = [
 				fault_label(fault),
 				mean_std(row, "auroc"),
+				mean_std(row, "auroc_online"),
 				*(mean_std(row, f"auroc_{signal}") for signal in DISPLAY_SIGNALS),
 			]
 			lines.append("| " + " | ".join(cells) + " |")
@@ -145,6 +151,21 @@ def build_safety_rows(rows: list[dict[str, str]]) -> list[dict[str, object]]:
 					"gated_wrong_std": number(row, "our_wrong_std"),
 					"wrong_delta_mean": number(row, "gate_wrong_delta_mean"),
 					"wrong_delta_std": number(row, "gate_wrong_delta_std"),
+					# E_wrong 能量口径（Nm/kg*s）+ 峰值反向力矩 + 指令 jerk。
+					"ungated_wrong_energy_mean": number(row, "our_ungated_wrong_energy_mean"),
+					"ungated_wrong_energy_std": number(row, "our_ungated_wrong_energy_std"),
+					"gated_wrong_energy_mean": number(row, "our_wrong_energy_mean"),
+					"gated_wrong_energy_std": number(row, "our_wrong_energy_std"),
+					"wrong_energy_delta_mean": number(row, "gate_wrong_energy_delta_mean"),
+					"wrong_energy_delta_std": number(row, "gate_wrong_energy_delta_std"),
+					"ungated_peak_wrong_mean": number(row, "our_ungated_peak_wrong_mean"),
+					"ungated_peak_wrong_std": number(row, "our_ungated_peak_wrong_std"),
+					"gated_peak_wrong_mean": number(row, "our_peak_wrong_mean"),
+					"gated_peak_wrong_std": number(row, "our_peak_wrong_std"),
+					"ungated_jerk_mean": number(row, "our_ungated_jerk_mean"),
+					"ungated_jerk_std": number(row, "our_ungated_jerk_std"),
+					"gated_jerk_mean": number(row, "our_jerk_mean"),
+					"gated_jerk_std": number(row, "our_jerk_std"),
 					"ungated_retained_mean": number(row, "our_ungated_retained_mean"),
 					"ungated_retained_std": number(row, "our_ungated_retained_std"),
 					"gated_retained_mean": number(row, "our_retained_mean"),
@@ -164,7 +185,8 @@ def render_safety_markdown(rows: list[dict[str, str]]) -> str:
 		"# Table II. Utility-Aware Gate Safety Trade-off",
 		"",
 		"Mean +/- std across three seeds. Wrong delta is gated minus ungated (negative is safer); "
-		"retained ratio is gated divided by ungated aligned torque.",
+		"retained ratio is gated divided by ungated aligned torque. E_wrong is the wrong-direction "
+		"energy in Nm/kg*s; peak wrong torque is in Nm/kg and command jerk in Nm/kg/s.",
 	]
 	for split, title in (("test_id", "ID"), ("test_ood", "OOD")):
 		lines.extend(
@@ -172,8 +194,8 @@ def render_safety_markdown(rows: list[dict[str, str]]) -> str:
 				"",
 				f"## {title}",
 				"",
-				"| Scenario | Wrong ungated | Wrong gated | Wrong delta | Retained ungated | Retained gated | Retained ratio | Mean gate |",
-				"|---|---:|---:|---:|---:|---:|---:|---:|",
+				"| Scenario | Wrong ungated | Wrong gated | Wrong delta | E_wrong ungated | E_wrong gated | Peak wrong ungated | Peak wrong gated | Jerk ungated | Jerk gated | Retained ungated | Retained gated | Retained ratio | Mean gate |",
+				"|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
 			]
 		)
 		for fault in ("clean", *FAULTS):
@@ -183,6 +205,12 @@ def render_safety_markdown(rows: list[dict[str, str]]) -> str:
 				mean_std(row, "our_ungated_wrong"),
 				mean_std(row, "our_wrong"),
 				mean_std(row, "gate_wrong_delta"),
+				mean_std(row, "our_ungated_wrong_energy", digits=4),
+				mean_std(row, "our_wrong_energy", digits=4),
+				mean_std(row, "our_ungated_peak_wrong"),
+				mean_std(row, "our_peak_wrong"),
+				mean_std(row, "our_ungated_jerk", digits=2),
+				mean_std(row, "our_jerk", digits=2),
 				mean_std(row, "our_ungated_retained"),
 				mean_std(row, "our_retained"),
 				mean_std(row, "gate_retained_ratio"),

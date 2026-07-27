@@ -32,6 +32,18 @@ aaai27_paper_submission.zip
 # Local full-text paper extracts; keep curated Markdown notes instead
 paper/*.txt
 
+# LaTeX 编译中间产物（本机 TinyTeX 跑 make / make zh 的结果）。
+# 稿件 PDF 也不入库：每次 make 都能从 .tex + figures/ 重建，二进制 diff 无意义。
+# figures/*.pdf 是出图脚本的产物，例外保留。
+aaai27/*.aux
+aaai27/*.bbl
+aaai27/*.blg
+aaai27/*.log
+aaai27/*.out
+aaai27/*.pdf
+aaai27/missfont.log
+!aaai27/figures/*.pdf
+
 # Editor and OS metadata
 .DS_Store
 .idea/

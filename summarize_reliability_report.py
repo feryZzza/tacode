@@ -89,9 +89,21 @@ def build_detector_rows(results: dict[str, Any]) -> list[dict[str, Any]]:
 	rows = []
 	for key, metrics in sorted(results.items()):
 		if key.startswith("fault_detection/"):
-			rows.append({"detector": key, "auroc": metrics.get("fault_auroc")})
+			rows.append(
+				{
+					"detector": key,
+					"auroc": metrics.get("fault_auroc"),
+					"auroc_online": metrics.get("fault_auroc_online"),
+				}
+			)
 		elif key == "ood_detection/clean":
-			rows.append({"detector": key, "auroc": metrics.get("risk_auroc")})
+			rows.append(
+				{
+					"detector": key,
+					"auroc": metrics.get("risk_auroc"),
+					"auroc_online": metrics.get("risk_auroc_online"),
+				}
+			)
 	return rows
 
 
@@ -200,7 +212,18 @@ def render_markdown(
 		)
 
 	if detector_rows:
-		lines.extend(["## Detection", "", md_table(["detector", "auroc"], [[row["detector"], row["auroc"]] for row in detector_rows]), ""])
+		# auroc = Detector-all（八通道），auroc_online = Detector-online（限定在 K_gate 内重选）。
+		lines.extend(
+			[
+				"## Detection",
+				"",
+				md_table(
+					["detector", "auroc", "auroc_online"],
+					[[row["detector"], row["auroc"], row.get("auroc_online")] for row in detector_rows],
+				),
+				"",
+			]
+		)
 
 	if gate_rows:
 		lines.extend(
