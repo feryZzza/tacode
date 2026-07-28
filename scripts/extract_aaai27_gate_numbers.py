@@ -75,6 +75,8 @@ def collect_reselection(directory: Path) -> Dict[str, object]:
 		return {}
 	fields = [
 		"val_clean_x_opp", "val_fault_x_opp", "val_clean_tracking_rmse",
+		"val_clean_aligned_command_adequacy", "val_clean_aligned_command_retention",
+		"val_clean_capped_overlap_adequacy",
 		"val_clean_capped_overlap_retention", "val_clean_full_shutdown_fraction",
 		"val_clean_shutdowns_per_minute", "val_clean_mean_abs_torque_rate",
 		"selected_gate_softness", "selected_gate_deadband",
@@ -104,16 +106,24 @@ def collect_baselines(directory: Path) -> Dict[str, object]:
 	"""
 	rows = [r for r in read_tsv(directory / "aggregate.tsv") if r.get("gate")]
 	random_rows = [
-		r
-		for name in ("randomization_v2_fc_main_seed7.tsv", "randomization_v2_fc_main_seed13.tsv",
-			"randomization_v2_fc_main_seed23.tsv")
-		for r in read_tsv(directory / name)
+		row
+		for path in sorted(directory.glob("randomization_*.tsv"))
+		for row in read_tsv(path)
 	]
 	if not rows:
 		return {}
 
-	metrics = ("x_opp", "aligned_command_retention", "tracking_rmse",
-		"mean_abs_torque_rate", "shutdowns_per_minute", "full_shutdown_fraction")
+	metrics = (
+		"x_opp",
+		"aligned_command_retention",
+		"aligned_command_adequacy",
+		"capped_overlap_retention",
+		"capped_overlap_adequacy",
+		"tracking_rmse",
+		"mean_abs_torque_rate",
+		"shutdowns_per_minute",
+		"full_shutdown_fraction",
+	)
 	by_gate: Dict[str, Dict[str, object]] = {}
 	buckets: Dict[Tuple[str, str, str], List[Dict[str, str]]] = defaultdict(list)
 	for row in rows:
@@ -189,8 +199,17 @@ def collect_dynamics(directory: Path) -> Dict[str, object]:
 		family, split, scenario, fall, rise = key
 		record: Dict[str, object] = {"family": family, "task_split": split, "scenario": scenario,
 			"max_fall_per_step": fall, "max_rise_per_step": rise}
-		for metric in ("x_opp", "aligned_command_retention", "tracking_rmse",
-			"mean_abs_torque_rate", "shutdowns_per_minute", "p95_shutdown_duration_ms"):
+		for metric in (
+			"x_opp",
+			"aligned_command_retention",
+			"aligned_command_adequacy",
+			"capped_overlap_retention",
+			"capped_overlap_adequacy",
+			"tracking_rmse",
+			"mean_abs_torque_rate",
+			"shutdowns_per_minute",
+			"p95_shutdown_duration_ms",
+		):
 			record[metric] = mean_sd([v for v in (num(r, metric) for r in group) if v is not None])
 		families[f"{family}|{split}|{scenario}|{fall}|{rise}"] = record
 
@@ -235,7 +254,7 @@ def _duration_label(row: Dict[str, str]) -> str:
 
 
 def collect_transients(directory: Path) -> Dict[str, object]:
-	"""§4：按故障时长汇总延迟/漏检，以及 clean-pause 负对照的误报率。"""
+	"""§4：按故障时长汇总延迟/漏检，以及 clean pseudo-onset 负对照的误报率。"""
 	rows = read_tsv(directory / "aggregate.tsv")
 	if not rows:
 		return {}
@@ -261,7 +280,13 @@ def collect_transients(directory: Path) -> Dict[str, object]:
 			control[split] = record
 		else:
 			by_duration[split][bucket] = record
-	return {"by_duration": dict(by_duration), "clean_pause_control": control, "n_rows": len(rows)}
+	return {
+		"by_duration": dict(by_duration),
+		"clean_pseudo_onset_control": control,
+		# Compatibility alias for the historical operator identifier.
+		"clean_pause_control": control,
+		"n_rows": len(rows),
+	}
 
 
 def collect_paired(directory: Path) -> Dict[str, object]:

@@ -2,6 +2,30 @@
 
 记录稿件里每个数字的来源、如何复算，以及哪些项还没验证。
 
+## 2026-07-28 最终门控一致性审计
+
+最新代码审计确认：2026-07-27 完成的主模型、Detector-all/Detector-gate AUROC、稳态安全
+表、stress 与 LOSO 数字仍可复算；但随后第一轮 §2--§5 审稿实验有两处口径错误，不能
+作为六通道实际门控的最终证据：
+
+1. `GatePolicy.from_report` 读取了 `_detector_policy.online_signals`，导致 downstream
+   gate-baseline、dynamics、transient 与 paired analysis 实际评估 Detector-gate 的
+   validation-selected AUROC 子集，而不是论文定义的六通道执行门控；
+2. 历史 `*_retained_aligned_torque` 以 ideal command 为分母，语义是
+   aligned-command adequacy；论文的 retention \(\kappa\) 应以 ungated estimator 为
+   分母。第一轮 retention-matched random control 也只置换 gate 值，没有严格匹配
+   \(\kappa\)；
+3. 第一轮 gate-reselection driver 使用了 `stairs,ramp`，而主论文报告保存的
+   held-out tasks 是 `jump,cutting,lift_weight,lunges`，因此其重选工作点也必须按原
+   split 重跑。
+
+本地已修复 policy/metric 语义、精确 retention-matched random control、统一
+reselected-policy 流水线和交付 validator。稿件把第一轮 §2--§6 数字明确标成
+post-hoc exploratory，并移除 oracle upper-bound、全栈支配及瞬态范围等过强或错误表述。
+最终数字必须按 `EXPERIMENTS_TODO.md` 的 P0 在服务器纯 eval 后再写回；不需要重训主模型。
+当前容器没有 `pdflatex`，而 AAAI 官方样式拒绝 XeTeX/Tectonic；因此本轮英文源文件只完成
+结构、引用和数字键检查，页数、浮动体和 overfull 必须在有 pdfTeX 的环境重新验收。
+
 ## 最终 AAAI-27 验收口径（2026-07-27）
 
 本节及文首表格记录最终提交状态；后文保留的多轮排版记录仅用于审计修改
@@ -21,7 +45,7 @@ checkpoint (reports/v2_*/reliability_tcn_best.pt)
   └─ run_reliability_experiment.py      →  reports/v2_fc_*/reliability_report.json
        └─ summarize_reliability_suite.py →  reports/v2_fc_paper_suite/{paper_numbers.json, table*.tsv, loso_effect.json}
             ├─ scripts/draw_aaai_figures.py  →  aaai27/figures/*.pdf
-            └─ 手工核对                        →  main.tex / main_zh.tex
+            └─ 手工核对                        →  main.tex
        └─ scripts/export_timeseries.py   →  aaai27/figures/data/timeseries_overview.npz  →  图 1(c)
 ```
 
@@ -125,19 +149,19 @@ data sources: detection=suite, macro=suite, safety=suite, ablation=suite, stress
 
 | 项 | 状态 | 原因 |
 | --- | --- | --- |
-| 页数是否符合 AAAI-27 限制 | 已核（2026-07-27，TeX Live 2026） | 英文 8 页；正文与伦理声明止于第 7 页，参考文献从第 7 页开始并延续到第 8 页 |
-| overfull box | 已核 | 英文 0；underfull hbox 2 处、页底 underfull vbox 2 处，均不越界 |
-| 浮动体落位 | 已核 | 图 1 在 p3、表 1 在 p5、图 2 在 p6、图 3 在 p7；消融与压力/LOSO 全图在匿名 supplement |
+| 页数是否符合 AAAI-27 限制 | 上一版已核；2026-07-28 英文修订待重编 | 上一版为 8 页且正文止于第 7 页；当前环境无 `pdflatex` |
+| overfull box | 上一版已核；当前待重编 | 上一版英文 0；本轮只完成静态结构检查 |
+| 浮动体落位 | 上一版已核；当前待重编 | 上一版图 1 在 p3、表 1 在 p5、图 2 在 p6、图 3 在 p7 |
 | 图 PDF 的 MediaBox 宽度 | 已核 | 五张导出图的 `pdfinfo` 宽度均 ≤ `figsize`，最宽 494 pt = 6.86 in |
 | `tests/test_forecast_residual.py` | 已通过（5 case） | 2026-07-26 本机 |
 | `tests/test_gate_selection.py` | 已通过（2 case） | 同上 |
 | `tests/test_wrong_energy_and_online_detector.py` | 已通过（7 case） | 2026-07-27 本机 |
 
-页数 / 溢出框 / 浮动体三项要 `pdflatex`（英文）与 `xelatex`（中文）。开发机已装 TinyTeX：
+页数 / 溢出框 / 浮动体三项要用 `pdflatex` 验收。开发机已装 TinyTeX：
 
 ```bash
 export PATH=$HOME/bin:$HOME/.TinyTeX/bin/x86_64-linux:$PATH
-make && make zh
+make
 ```
 
 单测在开发机上跑通，14/14（S1/S2 新增 `test_wrong_energy_and_online_detector.py` 7 个 case）。
@@ -225,7 +249,7 @@ Detector-all 的四个宏平均 AUROC 与重跑前逐位一致（说明改动没
 所以只有单栏的图 5 能加 `b`。改后的页数需要在有 TeX 的机器上重编译确认。
 
 任务 I（逐 timestep 导出）已完成，不再是可选项：`aaai27/figures/data/timeseries_overview.npz`
-在位，中英文 caption 都已改成真实导出的表述。`EXPERIMENTS_TODO.md` §10 仍按「P3 可选、
+在位，英文 caption 已改成真实导出的表述。`EXPERIMENTS_TODO.md` §10 仍按「P3 可选、
 保留示意图」写，那是执行前的计划口径，已过期。
 
 ## 版面瘦身与审稿意见回应（2026-07-27 第二轮）
@@ -267,8 +291,7 @@ Detector-all 的四个宏平均 AUROC 与重跑前逐位一致（说明改动没
 | Limitations 补 OOD 混淆 | 明确写出干净留出任务上门控仍降 0.74 pp，与故障留出的 1.09 / 1.03 pp 同量级，所以聚合效应里有一部分是抑制普通任务偏移误差而非故障；分离需要当前协议没有的无故障 OOD 对照 |
 | 可复现细节 | 种子 7/13/23、检测器与门控在验证集上冻结、burst 丢包 / 独立通道丢失 / 随机延迟抖动不参与训练与检测器选择 |
 
-`main_zh.tex` 已同步以上全部改动（含面板 (d) caption、消融段落、Limitations 首句）。
-两份 `.tex` 结构检查通过：环境配对、花括号配对、无悬空 `\ref`、无未用 `\label`。
+`main.tex` 结构检查通过：环境配对、花括号配对、无悬空 `\ref`、无未用 `\label`。
 
 审稿意见里的第 2、3 项各有一半要在服务器上跑（$X_{\mathrm{opp}}$ 需纯 eval 重跑；
 Detector-all / Detector-gate 拆分需 checkpoint），已写进 `README.md` 的执行记录。
@@ -336,11 +359,11 @@ grep -l fault_auroc_online reports/v2_fc_*/reliability_report.json | wc -l   # �
 
 回压只动措辞不动结论：合并 Related Work / Problem Formulation / Limitations 的并列短句、
 压缩 $X_{\mathrm{opp}}$ 公式、图 4/5 的 caption、
-删掉「执行器回放仅作离线代理」等与前句重复的收尾句（中文版同步删除同两句）。
+删掉「执行器回放仅作离线代理」等与前句重复的收尾句。
 
 这条已在下一节闭合：本机装上 TeX 后直接量页数，不再用 44.9 词/栏英寸估算。
 
-结构检查两份 `.tex` 通过（无悬空 `\ref`、无未用 `\label`、环境与花括号配对、`$` 成对）；
+`main.tex` 结构检查通过（无悬空 `\ref`、无未用 `\label`、环境与花括号配对、`$` 成对）；
 `scripts/check_paper_numbers.py` 37 项在位、`缺失键数量: 0`。
 
 ## 7 页版面合规（2026-07-27，本机 TinyTeX）
@@ -384,25 +407,6 @@ pdftotext -f 8 -l 8 main.pdf - | sed -n '1,3p'   # 第一行应当就是 Referen
 p6 519 / p7 651 词），第 8 页只有参考文献；overfull 0、underfull hbox 0、
 undefined 0、error 0；`\cite` 键与 `references.bib` 双向一致，24 条全部命中。
 浮动体：图 1 p3、表 1 p5、图 2/3 p6、图 4/5 p7，无纯浮动页。
-
-### 中文版原本编译不过（先于本轮改动存在）
-
-`main_zh.tex` 在 HEAD 上就有 9 个 `! Improper alphabetic constant`。最小复现：
-xeCJK 下 tabular 单元里 `\\` 紧跟一个 CJK 字符就会炸。三处表头（`:259`、`:293`、`:326`）
-在 `\\` 前补一个空格即可：
-
-```python
-re.subn(r'([　-鿿＀-￯])\\\\(\s*$)', r'\1 \\\\\2', s, flags=re.M)
-```
-
-另有 3 个 `Missing character: There is no ，(U+FF0C)`：两个全角逗号落在数学环境里，
-在 PDF 里直接渲染成空白。改成 ASCII 逗号，并扫过一遍确认数学环境与行内 `$...$`
-里再没有 CJK 标点。修完中文版 14 页，errs / missing / overfull / undefined 全 0。
-
-### 仍然挂起
-
-第 6 条（中英表格数不对等，zh 4 表 / en 1 表）继续挂起，且理由变强了：正文卡在 7 页
-上限，补英文表格要先腾出约一栏，只能靠删分析换。要做的话是明确的取舍，得先定夺删哪一项。
 
 ## 图例纵向压字（2026-07-27 第四轮，本机）
 
@@ -549,19 +553,11 @@ pdfinfo main.pdf | grep Pages                          # 必须 ≤ 9
 同轮验收（上文早期章节里的「单测 14/14」是当时的计数，现已扩到 49）：
 `check_paper_numbers.py` 缺失键 0、`make check-figures` 通过、
 `data sources` 七项全是 `suite`/`export`、`unittest discover` 49/49 OK、
-四份 PDF 分别 8 / 15 / 5 / 2 页且 overfull 全 0。
+三份投稿 PDF 分别 8 / 5 / 2 页且 overfull 全 0。
 
 页面分布：p3 图 1、p5 表 1、p6 图 2+图 3、正文与伦理声明止于 p7、p8 全是参考文献。
 p6 仍是双栏浮动页（332 词），`\dbltopfraction`/`\dblfloatpagefraction`/`[!t]` 都推不动它，
 唯一有效的杠杆就是图宽。
-
-### 中文版同步
-
-`main_zh.tex` 之前还停在旧结论（局限性里写「缺少等保留率随机门控、oracle gate…」，
-而这些实验已经跑完），本轮补齐：摘要、门控方法（重选规则 + 因果限速）、
-两个新结果小节（重选工作点与匹配对照 / 瞬态·配对·反向消融）、讨论、局限性、结论。
-顺带修掉两处 overfull：$\gamma$ 取值集合改成行内列举、检测表 `\small` → `\scriptsize`。
-现在中文 15 页，overfull / missing character / undefined / error 全 0。
 
 ### ReproducibilityChecklist 之前编译不过
 
@@ -570,11 +566,6 @@ p6 仍是双栏浮动页（332 词），`\dbltopfraction`/`\dblfloatpagefraction
 A100 80GB PCIe（驱动 570.211.01）、503 GB 内存、Ubuntu 22.04.5（Linux 6.2.1）、
 Python 3.12 + PyTorch 2.11.0/CUDA 12.8，单 seed 训练 30–50 GPU-min（从 `logs/v2_reverse_*`
 的起止时间实测），§1–§6 全部是纯 eval。
-
-### 仍然挂起
-
-中英表格数不对等（zh 4 表 / en 1 表）继续挂起，理由不变：英文正文卡在 7 页，
-补表要先腾出约一栏，只能删分析换。取舍要先定夺。
 
 ## 服务器侧建议保留
 

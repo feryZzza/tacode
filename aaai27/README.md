@@ -1,12 +1,11 @@
 # AAAI-27 稿件
 
-从故障证据到控制后果的任务无关外骨骼可靠性评估。中英双语稿件，图表全部由脚本从
-实验汇总目录确定性生成。
+从故障证据到控制后果的任务无关外骨骼可靠性评估。只维护英文投稿稿件，图表全部由
+脚本从实验汇总目录确定性生成。
 
 ## 文件
 
 - `main.tex` — 英文投稿主文件，单文件匿名格式，符合官方 author kit 要求。
-- `main_zh.tex` — 中文版，`ctexart` 文档类，必须用 XeLaTeX 编译。
 - `references.bib` — 参考文献。
 - `aaai2027.sty`、`aaai2027.bst` — AAAI-27 官方 author kit（2026 年 5 月版）原文件，不要修改。
 - `figures/` — 投稿用矢量 PDF，附 SVG 源和 600 dpi PNG 预览。
@@ -20,12 +19,11 @@
 
 ```bash
 make          # 出图 + 英文版
-make zh       # 中文版（XeLaTeX）
 make figures  # 只出图
 make submission  # 英文正文 + 官方复现清单 + 匿名补充材料
 ```
 
-英文版走 pdflatex，中文版走 xelatex。两者共用同一批图。
+投稿稿件使用 `pdflatex`。
 
 ## 数字从哪来
 
@@ -86,6 +84,12 @@ author kit 要求移除的 Identity-H 字体；可编辑文字保留在配套 SV
 
 两项都做完了，全部 `v2_fc_*` 已按新口径重评一遍（纯 eval，复用现成 checkpoint，没有重训；
 `RESULTS_PROVENANCE.md` 末节的「别删主 checkpoint」依然有效）。落地情况：
+
+> **2026-07-28 最终门控审计更新：**S1/S2 的主模型与检测数字仍有效，但后续第一轮
+> §2--§5 门控审稿实验误把 Detector-gate 的 validation-selected AUROC 子集当成实际
+> 六通道执行门控，并把 aligned-command adequacy 写成 retention。正文现已把该批结果
+> 降为探索性证据；最终六通道纯评测及自动验收命令见 `EXPERIMENTS_TODO.md`。无需重训
+> 三个主模型。
 
 | 项 | 代码落点 | 状态 |
 | --- | --- | --- |
@@ -153,7 +157,7 @@ done
 
 改完要同步：摘要四个 AUROC、§Fault Detection under Task Shift 的四个数、
 `fig_detection_taxonomy` 的融合列（`draw_aaai_figures.py` 要多读一列）、
-`RESULTS_PROVENANCE.md` 的「主要数字」表。中文版 `main_zh.tex` 同步。
+`RESULTS_PROVENANCE.md` 的「主要数字」表。
 
 ## 投稿前
 
@@ -166,15 +170,16 @@ done
 全文不超过 9 页；伦理声明算在 7 页正文内，附录另投 Supplementary Document
 （正文 7 月 28 日截稿，附录 7 月 31 日）。
 
-开发机已装 TinyTeX，前三项现已本机验证：
+2026-07-27 的上一版曾用 TinyTeX 完成以下验收：
 
 ```bash
 export PATH=$HOME/bin:$HOME/.TinyTeX/bin/x86_64-linux:$PATH
 make            # 英文，pdflatex
-make zh         # 中文，xelatex
 ```
 
-当前编译结果：英文 8 页；正文和伦理声明止于第 7 页，参考文献从第 7 页开始并延续到
+上一版编译结果：英文 8 页；正文和伦理声明止于第 7 页，参考文献从第 7 页开始并延续到
 第 8 页，overfull / undefined / error 均为 0。日志有两处普通段落的 underfull hbox
 以及两处双栏页底 underfull vbox，不造成越界。消融和压力/LOSO 全图移入 3 页匿名补充
-材料，主文保留对应数值和统计限定。官方复现清单单独编译为 2 页。
+材料，主文保留对应数值和统计限定。官方复现清单单独编译为 2 页。当前工作环境已没有
+`pdflatex`，因此 2026-07-28 的英文修订必须在服务器或另一台 TeX Live 机器上重新执行
+`make submission`，不能沿用上一版页数作为最终验收。

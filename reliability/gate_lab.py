@@ -187,6 +187,7 @@ class GatePolicy:
 	max_fall_per_step: float = 0.0
 	max_rise_per_step: float = 0.0
 	signals: Tuple[str, ...] = K_GATE
+	detector_signals: Tuple[str, ...] = ()
 	source: str = ""
 
 	@classmethod
@@ -194,11 +195,16 @@ class GatePolicy:
 		results = report.get("results", {})
 		policy = results.get("_gate_policy", {})
 		args = report.get("args", {})
-		raw = results.get("_detector_policy", {}).get("online_signals", "")
-		if isinstance(raw, str):
-			signals = tuple(s.strip() for s in raw.split(",") if s.strip())
+		raw_detector = results.get("_detector_policy", {}).get("online_signals", "")
+		if isinstance(raw_detector, str):
+			detector_signals = tuple(s.strip() for s in raw_detector.split(",") if s.strip())
 		else:
-			signals = tuple(raw)
+			detector_signals = tuple(raw_detector)
+		raw_gate = policy.get("gate_signals", args.get("detector_online_signals", K_GATE))
+		if isinstance(raw_gate, str):
+			signals = tuple(s.strip() for s in raw_gate.split(",") if s.strip())
+		else:
+			signals = tuple(raw_gate)
 		return cls(
 			softness=float(policy.get("softness", args.get("gate_softness", 0.5))),
 			deadband=float(policy.get("deadband", args.get("gate_deadband", 0.0))),
@@ -208,7 +214,11 @@ class GatePolicy:
 			max_rise_per_step=float(
 				policy.get("selected_gate_max_rise_per_step", args.get("gate_max_rise_per_step", 0.0) or 0.0)
 			),
+			# The deployed/evaluated gate fuses every available command-time
+			# channel.  Detector-gate's validation-selected subset is a
+			# window-level AUROC diagnostic and must not silently replace it.
 			signals=signals or K_GATE,
+			detector_signals=detector_signals,
 			source=str(policy.get("policy_source", "")),
 		)
 
@@ -269,9 +279,9 @@ def oracle_error_gate(
 ) -> torch.Tensor:
 	"""oracle 门控：用真实预测误差（|τ̂-τ*| 在关节维取均值）当风险。
 
-	它不可实现，作用是给出「如果检测器完美」时门控能达到的上界；实际门控与它的
-	差距就是检测误差造成的损失，而不是门控形式造成的。误差用 `error_ref` 归一，
-	与其他通道同样以 1.0 为名义阈值。
+	它不可实现，只作为“真实瞬时预测误差能否提供更好触发时机”的诊断对照。它不是
+	理论上界：同一标定、死区和限速映射未必让误差门控最小化 $X_{opp}$。误差用
+	`error_ref` 归一，与其他通道同样以 1.0 为名义阈值。
 	"""
 	error = (moment_to_torque(batch.mean) - moment_to_torque(batch.y)).abs().mean(dim=1, keepdim=True)
 	risk = error / max(error_ref, 1e-6)
@@ -321,15 +331,65 @@ def permuted_gate(
 	return flat.reshape(gate.shape)
 
 
+def retention_matched_random_attenuation_gate(
+	shape: Tuple[int, ...],
+	valid: torch.Tensor,
+	basis: "ExposureBasis",
+	target_adequacy: float,
+	generator: torch.Generator,
+	dtype: torch.dtype = torch.float32,
+	tolerance: float = 1e-7,
+) -> torch.Tensor:
+	"""Draw a random attenuation gate with exact aligned-command retention.
+
+	The previous permutation control preserved the gate-value distribution but
+	not the paper's retention statistic, because retention is weighted by the
+	ungated aligned command.  This control draws independent random priorities
+	and solves a monotone scale parameter by bisection so every draw matches the
+	target retention (up to ``tolerance``) while destroying timing information.
+	"""
+	valid_gate = valid.expand(shape)
+	draw = torch.rand(shape, generator=generator, dtype=torch.float32)
+	draw = torch.where(valid_gate, draw, torch.zeros_like(draw))
+	ungated_adequacy = basis.aligned_command_adequacy(torch.ones(shape, dtype=dtype))
+	if (
+		target_adequacy != target_adequacy
+		or ungated_adequacy != ungated_adequacy
+		or ungated_adequacy <= 1e-12
+	):
+		return torch.ones(shape, dtype=dtype)
+	target = min(max(float(target_adequacy), 0.0), float(ungated_adequacy))
+
+	# gate(alpha) = clamp(alpha * U, 0, 1) spans retention [0, ungated].
+	low = 0.0
+	high = 1.0
+	while basis.aligned_command_adequacy(torch.clamp(draw * high, 0.0, 1.0).to(dtype)) < target:
+		high *= 2.0
+		if high >= 1e9:
+			break
+	for _ in range(60):
+		mid = (low + high) / 2.0
+		gate = torch.clamp(draw * mid, 0.0, 1.0).to(dtype)
+		value = basis.aligned_command_adequacy(gate)
+		if abs(value - target) <= tolerance:
+			break
+		if value < target:
+			low = mid
+		else:
+			high = mid
+	gate = torch.clamp(draw * ((low + high) / 2.0), 0.0, 1.0).to(dtype)
+	return torch.where(valid_gate, gate, torch.ones_like(gate))
+
+
 # ---------------------------------------------------------------- 快速暴露量
 
 
 @dataclass
 class ExposureBasis:
-	"""$X_{\\mathrm{opp}}$ / retention 对非负门控的线性基（随机化检验用）。
+	"""$X_{\\mathrm{opp}}$ / aligned-command adequacy 的线性基（随机化检验用）。
 
 	对 $g\\ge 0$：$\\max(0,-(g\\tau^{cmd}\\tau^*)) = g\\max(0,-\\tau^{cmd}\\tau^*)$，
-	aligned retention 的分子同理逐点线性。所以只要预存这两个逐点系数，任意门控的
+	aligned command 的分子同理逐点线性。所以只要预存这两个逐点系数，任意门控的
 	暴露量就是一次带 mask 的点积——1000 次抽样从「重跑指标」变成「1000 个点积」。
 	"""
 
@@ -353,10 +413,14 @@ class ExposureBasis:
 	def x_opp(self, gate: torch.Tensor) -> float:
 		return float((self.opposition * gate).sum()) / self.sample_rate
 
-	def retention(self, gate: torch.Tensor) -> float:
+	def aligned_command_adequacy(self, gate: torch.Tensor) -> float:
 		if self.denom <= 1e-6:
 			return float("nan")
 		return float((self.aligned * gate).sum()) / self.denom
+
+	def retention(self, gate: torch.Tensor) -> float:
+		"""Backward-compatible alias for historical callers; this is adequacy."""
+		return self.aligned_command_adequacy(gate)
 
 
 # ---------------------------------------------------------------- 报告工具

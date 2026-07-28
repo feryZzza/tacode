@@ -3,12 +3,13 @@
 #
 # 四个 stage 都是纯 eval（复用已有 checkpoint，不重训），彼此独立，所以可以并行。
 # 每个 GPU 上串行跑一个 seed 的全部 stage，避免同一张卡上四个进程抢显存。
-set -uo pipefail
+set -euo pipefail
 cd "$(dirname "$0")/.."
 
 PY=${PY:-/home/zfy/miniconda3/envs/pytorch/bin/python}
 DATA_ROOT=${DATA_ROOT:-/home/zfy/dataset/tcn/Parsed}
 REPORTS=${REPORTS:-reports}
+POLICY_ROOT=${POLICY_ROOT:-$REPORTS/aaai27_gate_reselection}
 SEEDS=${SEEDS:-"7 13 23"}
 GPUS=${GPUS:-"4 5 6"}
 DRAWS=${DRAWS:-1000}
@@ -23,7 +24,7 @@ mkdir -p "$LOG_DIR"
 
 run_seed() {
 	local seed=$1 gpu=$2
-	local report="$REPORTS/v2_fc_main_seed${seed}/reliability_report.json"
+	local report="$POLICY_ROOT/seed${seed}/reliability_report.json"
 	local ckpt="$REPORTS/v2_main_seed${seed}/reliability_tcn_best.pt"
 	if [[ ! -f $report || ! -f $ckpt ]]; then
 		echo "SKIP seed $seed：缺 $report 或 $ckpt"
@@ -35,6 +36,7 @@ run_seed() {
 	echo "[seed $seed / gpu $gpu] §2 gate baselines"
 	CUDA_VISIBLE_DEVICES=$gpu $PY scripts/run_gate_baselines.py "${common[@]}" \
 		--output-dir "$REPORTS/aaai27_gate_baselines" --draws "$DRAWS" \
+		--reference-gate all_gate_channels \
 		> "$LOG_DIR/gate_baselines_seed${seed}.log" 2>&1
 	echo "[seed $seed / gpu $gpu] §2 exit=$?"
 
@@ -65,13 +67,13 @@ for pid in "${pids[@]}"; do wait "$pid"; done
 # §5 一次跑完三个 seed（种子敏感性表要在同一个进程里汇总）。
 EXTRA=""
 for seed in 13 23; do
-	rep="$REPORTS/v2_fc_main_seed${seed}/reliability_report.json"
+	rep="$POLICY_ROOT/seed${seed}/reliability_report.json"
 	ckpt="$REPORTS/v2_main_seed${seed}/reliability_tcn_best.pt"
 	[[ -f $rep && -f $ckpt ]] && EXTRA="${EXTRA:+$EXTRA,}${rep}:${ckpt}"
 done
 echo "[§5] paired analysis (extra runs: ${EXTRA:-none})"
 CUDA_VISIBLE_DEVICES=${gpu_arr[0]} $PY scripts/run_paired_analysis.py \
-	--report "$REPORTS/v2_fc_main_seed7/reliability_report.json" \
+	--report "$POLICY_ROOT/seed7/reliability_report.json" \
 	--checkpoint "$REPORTS/v2_main_seed7/reliability_tcn_best.pt" \
 	--extra-runs "$EXTRA" --data-root "$DATA_ROOT" \
 	--output-dir "$REPORTS/aaai27_paired_analysis" \

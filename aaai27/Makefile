@@ -1,4 +1,4 @@
-.PHONY: all clean figures zh checklist supplement submission check-figures
+.PHONY: all clean figures checklist supplement submission check-figures
 
 PYTHON ?= python3
 FIGURE_SCRIPT := ../scripts/draw_aaai_figures.py
@@ -56,17 +56,7 @@ supplement.pdf: supplement.tex aaai2027.sty figures/fig_detection_full.pdf figur
 	pdflatex -interaction=nonstopmode -halt-on-error supplement.tex
 	pdflatex -interaction=nonstopmode -halt-on-error supplement.tex
 
-# 中文版用 ctexart，必须走 XeLaTeX；pdflatex 编不过。
-zh: main_zh.pdf
-
-main_zh.pdf: main_zh.tex references.bib aaai2027.bst $(FIGURE_PDFS)
-	xelatex -interaction=nonstopmode -halt-on-error main_zh.tex
-	bibtex main_zh
-	xelatex -interaction=nonstopmode -halt-on-error main_zh.tex
-	xelatex -interaction=nonstopmode -halt-on-error main_zh.tex
-
 clean:
 	$(RM) main.aux main.bbl main.blg main.log main.out main.pdf
-	$(RM) main_zh.aux main_zh.bbl main_zh.blg main_zh.log main_zh.out main_zh.pdf
 	$(RM) ReproducibilityChecklist.aux ReproducibilityChecklist.log ReproducibilityChecklist.out ReproducibilityChecklist.pdf
 	$(RM) supplement.aux supplement.log supplement.out supplement.pdf

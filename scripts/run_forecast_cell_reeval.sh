@@ -10,7 +10,7 @@
 # 输出写到新目录 reports/v2_reverse_prob_aug_recon_seed<N>/，不覆盖原归档：
 # 原 report 是旧口径的既有结果，改掉它会让历史数字不可复算。目录名沿用
 # `v2_reverse_*` 前缀，这样 aggregate_reverse_ablation.py 会自动把它当训练侧格子收进去。
-set -uo pipefail
+set -euo pipefail
 cd "$(dirname "$0")/.."
 
 PY=${PY:-/home/zfy/miniconda3/envs/pytorch/bin/python}
@@ -21,7 +21,7 @@ SRC_PREFIX=${SRC_PREFIX:-reports/v2_ablation_prob_aug_recon_seed}
 OUT_PREFIX=${OUT_PREFIX:-reports/v2_reverse_prob_aug_recon_seed}
 LOG_DIR=${LOG_DIR:-reports/aaai27_logs}
 CORE_FAULTS=${CORE_FAULTS:-"clean,insole_missing,encoder_dropout,imu_bias,packet_loss,packet_loss_burst,packet_loss_partial,stuck_imu,sensor_delay,sensor_delay_jitter"}
-HELDOUT_TASKS=${HELDOUT_TASKS:-"stairs,ramp"}
+HELDOUT_TASKS=${HELDOUT_TASKS:-}
 
 export OMP_NUM_THREADS=6 MKL_NUM_THREADS=6 OPENBLAS_NUM_THREADS=6 NUMEXPR_NUM_THREADS=6
 mkdir -p "$LOG_DIR"
@@ -42,14 +42,19 @@ for seed in $SEEDS; do
 	log="$LOG_DIR/forecast_cell_seed${seed}.log"
 	# 训练期超参与门控工作点全部从原 report 读回：这一格与其他六格的差异必须只有
 	# 「有没有 forecast 头」，任何评测侧参数漂移都会让 Pareto 比较失去意义。
-	read -r window stride profile side limit_trials mc softness deadband fall rise < <("$PY" - "$src/reliability_report.json" <<'EOF'
+	read -r window stride profile side limit_trials report_heldout mc softness deadband fall rise < <("$PY" - "$src/reliability_report.json" <<'EOF'
 import json, sys
 report = json.loads(open(sys.argv[1]).read())
 a = report["args"]
 pol = report.get("results", {}).get("_gate_policy", {}) or {}
+heldout = a.get("heldout_tasks", "")
+if isinstance(heldout, (list, tuple)):
+	heldout = ",".join(map(str, heldout))
+else:
+	heldout = ",".join(item.strip() for item in str(heldout).split(",") if item.strip())
 print(
 	a["window_size"], a["stride"], a["input_profile"], a["side"],
-	a.get("limit_trials", 0), a.get("mc_samples", 0) or 0,
+	a.get("limit_trials", 0), heldout, a.get("mc_samples", 0) or 0,
 	pol.get("softness", a.get("gate_softness", 0.5)),
 	pol.get("deadband", a.get("gate_deadband", 0.0)),
 	pol.get("gate_max_fall_per_step", a.get("gate_max_fall_per_step", 0.0)),
@@ -57,6 +62,11 @@ print(
 )
 EOF
 	)
+	heldout="${HELDOUT_TASKS:-$report_heldout}"
+	if [[ -z $heldout ]]; then
+		echo "FAIL seed $seed：原报告未记录 heldout_tasks" >&2
+		exit 1
+	fi
 	echo "[seed $seed / gpu $gpu] forecast cell -> $out (softness=$softness deadband=$deadband)"
 	(
 		CUDA_VISIBLE_DEVICES=$gpu "$PY" run_reliability_experiment.py \
@@ -65,7 +75,7 @@ EOF
 			--input-profile "$profile" --side "$side" \
 			--window-size "$window" --stride "$stride" \
 			--max-windows-per-trial 4 --min-valid-fraction 0.5 \
-			--heldout-tasks "$HELDOUT_TASKS" --limit-trials "$limit_trials" \
+			--heldout-tasks "$heldout" --limit-trials "$limit_trials" \
 			--fault-scenarios "$CORE_FAULTS" \
 			--eval-ignore-history 248 --mc-samples "$mc" \
 			--gate-softness "$softness" --gate-deadband "$deadband" \

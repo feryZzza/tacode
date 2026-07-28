@@ -58,6 +58,9 @@ RESELECTION_FIELDS = (
 	"val_clean_x_opp",
 	"val_fault_x_opp",
 	"val_clean_tracking_rmse",
+	"val_clean_aligned_command_adequacy",
+	"val_clean_aligned_command_retention",
+	"val_clean_capped_overlap_adequacy",
 	"val_clean_capped_overlap_retention",
 	"val_clean_full_shutdown_fraction",
 	"val_clean_shutdowns_per_minute",
@@ -170,7 +173,7 @@ def collect_reselection(directory: Path) -> Tuple[List[Dict[str, object]], List[
 				problems.append(f"{report_path.parent.name}: _gate_policy 缺 {field}")
 		row["n_candidates"] = len(policy.get("candidates", []) or [])
 		row["n_feasible"] = sum(
-			1 for c in (policy.get("candidates", []) or []) if c.get("feasible")
+			1 for c in (policy.get("candidates", []) or []) if c.get("constraints_met")
 		)
 		rows.append(row)
 	return rows, problems

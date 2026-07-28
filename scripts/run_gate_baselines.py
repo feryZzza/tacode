@@ -6,16 +6,16 @@
   1. fault_only            仅 fault-head logit
   2. reconstruction_only   仅重构残差
   3. staleness_only        仅 staleness
-  4. selected_subset       验证集选出的冻结子集（论文报告的门控）
-  5. all_gate_channels     全部 K_gate 六路
+  4. selected_subset       Detector-gate 的验证集冻结子集（诊断对照）
+  5. all_gate_channels     全部 K_gate 六路（论文实际门控）
   6. hard_threshold        风险过阈直接断力矩（无软化、无 rate limit）
-  7. oracle_error          用真实预测误差当风险（不可实现的上界）
+  7. oracle_error          用真实预测误差当风险（不可实现的诊断对照）
   8. random_shutdown       $P(g{=}0)$-matched 随机关断
-  9. random_attenuation    clean-retention-matched 随机衰减（门控值随机置换）
+  9. random_attenuation    retention-matched 随机衰减
 
-第 8、9 格各做 `--draws` 次（默认 1000）固定种子抽样，报告随机化分布的
-均值/标准差/分位以及实际门控在该分布里的百分位——「比随机好」必须是可检验的陈述，
-不是并列两行数字。
+第 8、9 格默认以 `all_gate_channels` 为参照，各做 `--draws` 次（默认 1000）固定种子
+抽样。随机衰减每次都精确匹配参照门控的 aligned-command retention，而不只是近似匹配
+门控值分布；输出随机化分布和实际门控所在百分位。
 
 逐 seed × task split × fault operator 落盘，不只报 macro 平均：单一平均会把
 「某个故障算子上门控完全没反应」藏起来。
@@ -58,8 +58,8 @@ from reliability.gate_lab import (
 	hard_threshold_gate,
 	load_report,
 	oracle_error_gate,
-	permuted_gate,
 	random_shutdown_gate,
+	retention_matched_random_attenuation_gate,
 	soft_gate,
 	write_tsv,
 )
@@ -72,8 +72,10 @@ REQUIRED_METRICS = (
 	("x_opp", "gated_wrong_torque_product_integral"),
 	("wrong_direction_fraction", "gated_wrong_direction_ratio"),
 	("peak_wrong_torque", "gated_peak_wrong_torque"),
-	("aligned_command_retention", "gated_retained_aligned_torque"),
-	("capped_overlap_retention", "gated_capped_overlap"),
+	("aligned_command_retention", "gate_retention_ratio"),
+	("aligned_command_adequacy", "gated_aligned_command_adequacy"),
+	("capped_overlap_retention", "capped_overlap_retention_ratio"),
+	("capped_overlap_adequacy", "gated_capped_overlap_adequacy"),
 	("over_assistance_fraction", "gated_over_assistance_fraction"),
 	("tracking_rmse", "gated_tracking_rmse"),
 	("mean_abs_torque_rate", "gated_mean_abs_torque_rate"),
@@ -98,6 +100,12 @@ def parse_args() -> argparse.Namespace:
 		"packet_loss_partial,stuck_imu,sensor_delay,sensor_delay_jitter",
 	)
 	p.add_argument("--draws", type=int, default=1000, help="随机化检验的抽样次数（§2 要求 ≥1000）")
+	p.add_argument(
+		"--reference-gate",
+		default="all_gate_channels",
+		choices=["all_gate_channels", "selected_subset"],
+		help="matched-random 对照匹配哪一个门控；论文主对照必须用实际六通道门控。",
+	)
 	p.add_argument("--seed", type=int, default=0, help="随机化检验的固定种子")
 	p.add_argument("--device", default="cuda")
 	p.add_argument("--batch-size", type=int, default=32)
@@ -141,14 +149,15 @@ def gate_variants(
 		"reconstruction residual only")
 	add("staleness_only", soft_gate(batch, ["staleness"], policy, risk_refs), ["staleness"],
 		"staleness channel only")
-	add("selected_subset", soft_gate(batch, policy.signals, policy, risk_refs), policy.signals,
-		"validation-selected frozen subset (the reported gate)")
-	add("all_gate_channels", soft_gate(batch, K_GATE, policy, risk_refs), K_GATE,
-		"all six command-time channels")
+	selected = policy.detector_signals or policy.signals
+	add("selected_subset", soft_gate(batch, selected, policy, risk_refs), selected,
+		"Detector-gate validation-selected subset (diagnostic comparator)")
+	add("all_gate_channels", soft_gate(batch, policy.signals, policy, risk_refs), policy.signals,
+		"actual gate: all available command-time channels")
 	add("hard_threshold", hard_threshold_gate(batch, policy.signals, risk_refs), policy.signals,
 		"hard shutdown when calibrated risk exceeds 1.0")
 	add("oracle_error", oracle_error_gate(batch, policy, error_ref), ["oracle"],
-		"oracle: true prediction error as risk (unachievable upper bound)")
+		"oracle: true prediction error as risk (unachievable diagnostic comparator)")
 
 	# 逐通道留一：K_gate 去掉一路。这同时供 §6 的「minus staleness channel」与
 	# 「validation-selected-subset vs all channels」两格——它们是纯评测侧的差异，
@@ -178,6 +187,8 @@ def randomization_rows(
 	shutdown_fraction = float(reference.get("full_shutdown_fraction") or 0.0)
 	actual_x_opp = float(reference["x_opp"])
 	actual_retention = float(reference["aligned_command_retention"])
+	actual_adequacy = float(reference["aligned_command_adequacy"])
+	ungated_adequacy = basis.aligned_command_adequacy(torch.ones_like(reference_gate))
 
 	for name, sampler in (
 		("random_shutdown", "shutdown"),
@@ -187,30 +198,45 @@ def randomization_rows(
 		generator.manual_seed(seed)
 		x_opps: List[float] = []
 		retentions: List[float] = []
+		adequacies: List[float] = []
 		for _ in range(draws):
 			if sampler == "shutdown":
 				gate = random_shutdown_gate(
 					tuple(reference_gate.shape), valid, shutdown_fraction, generator, dtype=dtype
 				)
 			else:
-				gate = permuted_gate(reference_gate, valid, generator)
+				gate = retention_matched_random_attenuation_gate(
+					tuple(reference_gate.shape),
+					valid,
+					basis,
+					actual_adequacy,
+					generator,
+					dtype=dtype,
+				)
 			x_opps.append(basis.x_opp(gate))
-			retentions.append(basis.retention(gate))
+			adequacy = basis.aligned_command_adequacy(gate)
+			adequacies.append(adequacy)
+			retentions.append(adequacy / ungated_adequacy if ungated_adequacy > 1e-12 else float("nan"))
 		rows.append(
 			{
 				"gate": name,
 				"draws": draws,
 				"randomization_seed": seed,
-				"matched_quantity": "full_shutdown_fraction" if sampler == "shutdown" else "gate value distribution",
-				"matched_value": shutdown_fraction if sampler == "shutdown" else float("nan"),
+				"matched_quantity": (
+					"full_shutdown_fraction" if sampler == "shutdown"
+					else "aligned_command_retention"
+				),
+				"matched_value": shutdown_fraction if sampler == "shutdown" else actual_retention,
 				"random_x_opp_mean": statistics.fmean(x_opps),
 				"random_x_opp_sd": statistics.pstdev(x_opps) if len(x_opps) > 1 else 0.0,
 				"random_x_opp_p05": _quantile(x_opps, 0.05),
 				"random_x_opp_p50": _quantile(x_opps, 0.50),
 				"random_x_opp_p95": _quantile(x_opps, 0.95),
 				"random_retention_mean": statistics.fmean(retentions),
+				"random_adequacy_mean": statistics.fmean(adequacies),
 				"actual_x_opp": actual_x_opp,
 				"actual_retention": actual_retention,
+				"actual_adequacy": actual_adequacy,
 				# 实际门控在随机分布里的百分位：越接近 0 越说明「时机」本身有贡献。
 				"actual_x_opp_percentile": _percentile_of(x_opps, actual_x_opp),
 				"actual_retention_percentile": _percentile_of(retentions, actual_retention),
@@ -319,11 +345,12 @@ def main() -> None:
 				for out_key, src_key in REQUIRED_METRICS:
 					row[out_key] = metrics.get(src_key)
 				row["ungated_x_opp"] = metrics.get("ungated_wrong_torque_product_integral")
-				row["ungated_retention"] = metrics.get("ungated_retained_aligned_torque")
+				row["ungated_aligned_command_adequacy"] = metrics.get("ungated_aligned_command_adequacy")
+				row["ungated_capped_overlap_adequacy"] = metrics.get("ungated_capped_overlap_adequacy")
 				row["ungated_tracking_rmse"] = metrics.get("ungated_tracking_rmse")
 				row["ungated_mean_abs_torque_rate"] = metrics.get("ungated_mean_abs_torque_rate")
 				rows.append(row)
-				if name == "selected_subset":
+				if name == cli.reference_gate:
 					reference = {k: row[k] for k, _ in REQUIRED_METRICS}
 					reference_gate = gate
 			if reference is not None:
@@ -361,6 +388,7 @@ def main() -> None:
 				"faults": cli.faults,
 				"draws": cli.draws,
 				"randomization_seed": cli.seed,
+				"reference_gate": cli.reference_gate,
 				"training_seed": seed_label,
 				"gate_policy": {
 					"softness": policy.softness,
@@ -368,6 +396,7 @@ def main() -> None:
 					"max_fall_per_step": policy.max_fall_per_step,
 					"max_rise_per_step": policy.max_rise_per_step,
 					"signals": list(policy.signals),
+					"detector_signals": list(policy.detector_signals),
 					"source": policy.source,
 				},
 				"oracle_error_ref_q90_val_clean": error_ref,

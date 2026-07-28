@@ -8,13 +8,14 @@
   * duration ∈ {25,50,100,250,500} ms；
   * with recovery（区间结束后恢复干净）与 without recovery（持续到窗尾）；
   * 单故障与两个同时发生的故障；
-  * clean-pause 负对照：完全不注入故障，用来量 false shutdowns 与 alarm chatter，
+  * clean pseudo-onset 负对照：完全不注入故障或暂停，只复用 onset 网格，用来量
+    false shutdowns 与 alarm chatter，
     否则「响应快」可能只是「一直在关」。
 
 报告的时间量（全部以 onset/recovery 为零点，单位 ms）：
   onset → 首次 g<0.5 / 首次 g=0；recovery → 首次 g>0.5 / 首次 g=1；
   false shutdowns per minute（故障区间外的关断）；alarm chatter（跨 0.5 次数/min）；
-  短故障漏检率（整段故障期内 g 从未低于 0.5 的窗口占比）；clean-pause 误报率。
+  短故障漏检率（整段故障期内 g 从未低于 0.5 的窗口占比）；clean pseudo-onset 误报率。
 
 `--dump-timesteps` 打开时按 §4 落逐 timestep 明细（timestamp/participant/trial/
 task_split/fault_operator/onset/offset/fault_active/各异常通道/归一风险/gate/
@@ -152,7 +153,7 @@ def transient_metrics(
 ) -> Dict[str, float]:
 	"""onset/recovery 前后的门控时间响应。
 
-	`negative_control=True`（clean-pause）时没有故障区间，所有以 onset/recovery 为零点的
+	`negative_control=True`（clean pseudo-onset）时没有故障或暂停区间，所有以 onset/recovery 为零点的
 	延迟一律留 NaN——那种情况下「首次 g>0.5」只是「门控本来就开着」，报出来会被误读成
 	恢复很快。整窗都算区间外，于是 false shutdown / chatter 就是纯误报率。
 	"""
@@ -364,7 +365,8 @@ def main() -> None:
 			row.update(timing)
 			row["x_opp"] = exposure.get("gated_wrong_torque_product_integral")
 			row["ungated_x_opp"] = exposure.get("ungated_wrong_torque_product_integral")
-			row["aligned_command_retention"] = exposure.get("gated_retained_aligned_torque")
+			row["aligned_command_retention"] = exposure.get("gate_retention_ratio")
+			row["aligned_command_adequacy"] = exposure.get("gated_aligned_command_adequacy")
 			row["tracking_rmse"] = exposure.get("gated_tracking_rmse")
 			row["mean_abs_torque_rate"] = exposure.get("gated_mean_abs_torque_rate")
 			row["full_shutdown_fraction"] = exposure.get("full_shutdown_fraction")
@@ -395,7 +397,7 @@ def main() -> None:
 						dump=(onset == onsets[len(onsets) // 2]))
 				evaluate(label, primary, extras, onset, None, recovery=False)
 			print(f"[{time.time() - started:7.1f}s] {split}/{label} 完成 {len(onsets) * (len(durations) + 1)} 条")
-		# clean-pause 负对照：同样的 onset 网格，但不注入任何故障。
+		# clean pseudo-onset 负对照：同样的 onset 网格，但不注入任何故障或暂停。
 		for onset in onsets:
 			evaluate("clean_pause", "clean", [], onset, None, recovery=False)
 		print(f"[{time.time() - started:7.1f}s] {split}/clean_pause 负对照完成")

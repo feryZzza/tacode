@@ -11,7 +11,7 @@
 }
 
 \title{Supplementary Material: From Fault Evidence to Control Consequences}
-\author{Anonymous submission}
+\author{Anonymous Submission}
 \affiliations{}
 \date{}
 
@@ -48,11 +48,12 @@ excluded from gate tuning by the archived configuration.}
 \label{tab:fault-protocol}
 \end{table}
 
-Every injected fault occupies the full 768-sample window and therefore has a
-window-constant label. The protocol tests steady-state corruption
-discrimination, not onset latency, recovery, transient faults, or simultaneous
-faults. Clean and corrupted test scenarios reuse the same split-level source
-corpus, enabling the aggregate clean-adjusted contrast below.
+In the primary steady-state protocol every injected fault occupies the full
+768-sample window and therefore has a window-constant label. That protocol
+does not measure onset latency or recovery. A separate post-hoc transient
+extension, reported below, injects bounded intervals and two simultaneous
+synthetic fault pairs. Clean and corrupted test scenarios reuse the same
+split-level source corpus, enabling the aggregate clean-adjusted contrast below.
 
 \newpage
 \begin{figure*}[t]
@@ -79,6 +80,14 @@ shutdowns. The archived clean/fault wrong-direction non-increase checks are
 therefore identities, not active constraints. The main paper accordingly makes
 the continuously responsive $X_{\mathrm{opp}}$ primary and retains the count
 only as a hard-shutdown diagnostic.
+The magnitude-sensitive metric is also monotone under attenuation:
+\[
+X_{\mathrm{opp}}(g u)=\sum_{n\in\mathcal A}
+g_n\max(0,-u_n\tau_n^\star)\Delta t\leq X_{\mathrm{opp}}(u).
+\]
+Thus its raw decrease measures how much opposing command was removed, not
+whether the timing was fault-specific; clean adjustment, retention constraints,
+and matched random controls supply that missing comparison.
 
 Within each seed and task split, we subtract the clean gate change from every
 fault-scenario change and then macro-average the nine faults. The raw fault
@@ -136,31 +145,41 @@ wrong-direction fraction, first macro-averaged over nine faults and the two
 task splits. The resulting 15 values have mean $0.44$ percentage points,
 between-participant standard deviation $0.47$, range $0.04$--$1.31$, and
 $95\%$ percentile-bootstrap interval $[0.23,0.67]$. All 15 values are positive.
-This fold-level interval, rather than the variation over three training seeds,
-supports the manuscript's primary uncertainty statement.
+This fold-level interval summarizes dispersion over the observed participants;
+because nonnegative gating guarantees that this count cannot increase and the
+folds have overlapping training sets, it is descriptive rather than a
+population-level efficacy interval.
 
 \clearpage
 \section{Reselection, Matched Controls, and Transients}
 
 \paragraph{Constrained reselection.}
-The revised rule minimizes validation $X_{\mathrm{opp}}$ over $216$ candidates
-per seed, formed by crossing the softness grid with causal rate limits
-$\lambda^{\downarrow},\lambda^{\uparrow}\in\{0,0.001,0.0025,0.005,0.02,0.05\}$,
-subject to six clean-side constraints: aligned-command retention,
-capped-overlap retention, tracking RMSE, full-shutdown fraction, mean absolute
-torque rate, and false shutdowns per minute. All six hold in every seed. At the
-selected points the validation clean values are $X_{\mathrm{opp}}=0.1003$,
-tracking RMSE $0.0456$~Nm/kg, capped-overlap retention $0.631$, full-shutdown
-fraction $0.0028$, $0.510$ shutdowns per minute, and mean absolute torque rate
-$0.258$~Nm\,kg$^{-1}$\,s$^{-1}$; validation fault-side $X_{\mathrm{opp}}$ is
-$0.1129$. Seed 7 selects $(\gamma,\lambda^{\downarrow},\lambda^{\uparrow})=
-(0.5,0.0025,0.005)$ and seeds 13 and 23 select $(4.0,0.02,0.02)$, so the
-deadband varies over $0.263$--$0.339$ and the rate limits are not identical
-across seeds.
+The revised rule maximizes a validation score whose primary safety term is the
+relative reduction in $X_{\mathrm{opp}}$ over $216$ candidates per seed, formed
+by crossing $\gamma\in\{0.25,0.5,1,2,4,8\}$ with
+$\lambda^{\downarrow}\in\{0,0.0025,0.005,0.01,0.02,0.05\}$ and
+$\lambda^{\uparrow}\in\{0,0.001,0.0025,0.005,0.01,0.02\}$; zero means that the
+corresponding direction is unrestricted. Feasible candidates require clean
+aligned-command and capped-overlap retention at least $0.95$, tracking RMSE at
+most $1.05$ times ungated, full-shutdown fraction at most $0.02$, mean absolute
+torque rate at most $1.10$ times ungated, and at most $6$ false shutdowns per
+minute. Among feasible candidates, the score is the mean relative
+$X_{\mathrm{opp}}$ reduction over validation faults plus clean aligned-command
+retention plus $0.25$ times mean fault retention, minus $0.5$ times clean
+torque-rate inflation above one. The first execution used
+\texttt{stairs,ramp} as held-out tasks, whereas the primary split uses
+\texttt{jump,cutting,lift\_weight,lunges}. This changes ID and HT membership,
+so its operating points and validation summaries are excluded. The corrected
+driver reads held-out tasks, window, stride, profile, side, and trial limit from
+each archived main report; the delivery validator rejects any mismatch before
+the test summaries can be used.
 
-\paragraph{Nine-gate comparison and randomization.}
+\paragraph{Exploratory nine-gate comparison and randomization.}
 The matched comparison spans $280$ rows per seed over nine gates plus
-leave-one-out variants, with $1000$-draw randomization in $120$ cells. On ID
+leave-one-out variants, with $1000$-draw randomization in $120$ cells. This
+first pass reads the archived operating point and uses the validation-selected
+Detector-gate subset as its randomization reference, rather than the declared
+six-channel reselected actuation gate. On ID
 faults, fault-side $X_{\mathrm{opp}}$ is $0.0479$ with all six channels,
 $0.0479$ without the fault logit (bit-identical), $0.0479$ without aleatoric,
 $0.0479$ without epistemic, $0.0479$ without staleness, $0.0481$ without
@@ -171,29 +190,39 @@ to ungated, $0.0565$), and $0.0223$ for a hard threshold at $170$ shutdowns per
 minute. Random attenuation attains percentile $\geq 0.5$ in $11$ cells; the
 worst is $\mathrm{test\_id}/\mathrm{packet\_loss}$ at percentile $1.000$
 ($0.04101$ for the gate versus $0.04084$ for the permutation), whereas the
-strongest cell against random shutdown reaches only $0.272$.
+strongest cell against random shutdown reaches only $0.272$. The permutation
+preserves the gate-value distribution but not exact weighted
+aligned-command retention, so these are timing diagnostics rather than the
+final matched-control test.
 
-\paragraph{Rate-limit and hysteresis grid.}
+\paragraph{Exploratory rate-limit and hysteresis grid.}
 The dynamics sweep contains $468$ rows per seed. Relative to ungated ID faults
 ($X_{\mathrm{opp}}=0.0620$, torque rate $0.267$), $36$ rate-limited settings
 lower $X_{\mathrm{opp}}$ without raising torque rate. Representative points:
 $(\lambda^{\downarrow},\lambda^{\uparrow})=(0,0.001)$ gives $0.0278$ at torque
-rate $0.096$ and clean retention $0.501$; $(0.05,0.001)$ gives $0.0322$ at
-$0.115$ and $0.625$; $(0.02,0.001)$ gives $0.0371$ at $0.138$, clean retention
-$0.710$, and $1.32$ clean shutdowns per minute. Hysteresis gives $0.0083$ at
-clean retention $0.421$ with a $2360$~ms $95$th-percentile closure.
+rate $0.096$ and clean aligned-command adequacy $0.501$; $(0.05,0.001)$ gives
+$0.0322$ at $0.115$ and adequacy $0.625$; $(0.02,0.001)$ gives $0.0371$ at
+$0.138$, adequacy $0.710$, and $1.32$ clean shutdowns per minute. Hysteresis gives $0.0083$ at
+clean aligned-command adequacy $0.421$ with a $2360$~ms $95$th-percentile
+closure. These values use the same archived selected-subset policy as the
+comparison above.
 
-\paragraph{Transients.}
+\paragraph{Exploratory transients.}
 The transient protocol contributes $1608$ rows across onset fractions, six
-durations, recovery and no-recovery conditions, and a clean-pause negative
-control. Rows without a finite duration are the no-recovery condition, in which
+durations, recovery and no-recovery conditions, and a clean pseudo-onset
+control, including two simultaneous synthetic fault pairs. The control reuses
+clean windows and the onset grid but injects no pause or corruption. Rows without a
+finite duration are the no-recovery condition, in which
 the fault persists to the window end; their onset latency is defined but
 recovery latency is necessarily absent. Miss rates and onset-to-$g<0.5$ delays
-are $0.945/5.2$~ms, $0.933/12.9$~ms, $0.898/36.6$~ms, $0.814/102.4$~ms,
+conditional on threshold-crossing windows are $0.945/5.2$~ms, $0.933/12.9$~ms,
+$0.898/36.6$~ms, $0.814/102.4$~ms,
 $0.767/266.4$~ms, and $0.551/612.4$~ms for $25$, $50$, $100$, $250$, $500$~ms
-and persistent faults. False shutdowns are $18.9$--$19.2$ per minute in all
-fault conditions and $18.9$ in the clean-pause control, with $54.3$ alarm
-transitions per minute in the control.
+and persistent faults on ID tasks. The HT miss rates are $0.921$, $0.905$,
+$0.870$, $0.798$, $0.769$, and $0.553$. False shutdowns are
+$18.9$--$19.2$ per minute on ID and $46.2$--$47.0$ on HT fault conditions,
+matching clean pseudo-onset controls at $18.9$ and $46.2$; the ID control has $54.3$
+alarm transitions per minute.
 
 \paragraph{Paired analysis and reverse ablation.}
 The paired analysis matches windows on (participant, trial, window start),
@@ -203,10 +232,12 @@ participant-level bootstrap admits three distinct resampled means, so all $216$
 cells are flagged underpowered; $48$ of $54$ $X_{\mathrm{opp}}$ cells have
 intervals excluding zero and $52$ have negative point estimates, and $66$ of
 $72$ across-seed contrasts are sign-consistent. The reverse ablation reports
-eight cells at three seeds each: the seven required leave-one-component-out
-configurations plus an all-channel reference. The Pareto comparison restricts
-the fault-side mean to the operator set shared by all cells, since the trained
-and eval-side cells were run over different operator lists.
+eight cells at three seeds each. Two cells are nominally full-stack references
+from different evaluation paths and differ slightly because the gate definition
+or corruption realization is not frozen identically. The Pareto comparison
+restricts the fault-side mean to the operator set shared by all cells, but this
+does not remove that duplicate-reference confound; the current front is
+descriptive and must not be used for a dominance claim.
 
 \section{Reproduction Notes}
 

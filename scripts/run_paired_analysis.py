@@ -64,7 +64,13 @@ from reliability.nature_dataset import discover_trials, filter_records
 SAMPLE_RATE = 200.0
 
 #: 逐窗配对的指标。每个都必须能在单窗口上算出来（否则没法配对）。
-WINDOW_METRICS = ("x_opp", "aligned_command_retention", "tracking_rmse", "mean_abs_torque_rate")
+WINDOW_METRICS = (
+	"x_opp",
+	"aligned_command_retention",
+	"aligned_command_adequacy",
+	"tracking_rmse",
+	"mean_abs_torque_rate",
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -133,7 +139,7 @@ def per_window_metrics(
 
 	return {
 		"x_opp": opposition.sum(dim=dims).to(torch.float64) / SAMPLE_RATE,
-		"aligned_command_retention": torch.where(
+		"aligned_command_adequacy": torch.where(
 			denom > 1e-9, aligned.sum(dim=dims).to(torch.float64) / denom.clamp_min(1e-9),
 			torch.full_like(denom, float("nan")),
 		),
@@ -141,6 +147,25 @@ def per_window_metrics(
 		"mean_abs_torque_rate": rate.sum(dim=dims).to(torch.float64) / n_rate * SAMPLE_RATE,
 		"n_active": n_active,
 	}
+
+
+def add_gate_retention_ratio(
+	gated: Dict[str, torch.Tensor],
+	ungated: Dict[str, torch.Tensor],
+) -> None:
+	"""Add paper-defined kappa = gated aligned command / ungated aligned command."""
+	numerator = gated["aligned_command_adequacy"]
+	denominator = ungated["aligned_command_adequacy"]
+	gated["aligned_command_retention"] = torch.where(
+		denominator.abs() > 1e-12,
+		numerator / denominator,
+		torch.full_like(denominator, float("nan")),
+	)
+	ungated["aligned_command_retention"] = torch.where(
+		denominator.abs() > 1e-12,
+		torch.ones_like(denominator),
+		torch.full_like(denominator, float("nan")),
+	)
 
 
 def bootstrap_ci(
@@ -246,6 +271,7 @@ def analyse_run(
 			continue
 		clean_gated = per_window_metrics(clean, clean_gate)
 		clean_ungated = per_window_metrics(clean, None)
+		add_gate_retention_ratio(clean_gated, clean_ungated)
 		clean_keys = clean.window_keys()
 		clean_index = {key: i for i, key in enumerate(clean_keys)}
 
@@ -261,6 +287,7 @@ def analyse_run(
 				continue
 			f_gated = per_window_metrics(batch, gate)
 			f_ungated = per_window_metrics(batch, None)
+			add_gate_retention_ratio(f_gated, f_ungated)
 
 			# 配对：同 (participant, trial, window start) 才配。取不到就丢，不用近似匹配。
 			pairs: List[Tuple[int, int, str]] = []

@@ -567,7 +567,7 @@ def torque_replay_metrics(
 		max_rise_per_step=gate_max_rise_per_step,
 	)
 	gated_tau = baseline_tau * gate
-	return {
+	metrics = {
 		**_torque_metrics_for_command("baseline", baseline_tau, ideal_tau, valid_time, sample_rate),
 		**_torque_metrics_for_command("gated", gated_tau, ideal_tau, valid_time, sample_rate),
 		"mean_gate": float(gate[valid_time].mean().detach().cpu()) if valid_time.any() else float("nan"),
@@ -576,6 +576,7 @@ def torque_replay_metrics(
 		"gate_below_half_fraction": _safe_mean((gate < 0.5).float(), valid_time),
 		**gate_dynamics_metrics(gate, valid_time, sample_rate=sample_rate),
 	}
+	return _add_retention_semantics(metrics, "baseline", "gated")
 
 
 def metrics_for_given_gate(
@@ -600,7 +601,7 @@ def metrics_for_given_gate(
 	ideal_tau = moment_to_torque(true_moment)
 	baseline_tau = moment_to_torque(predicted_moment)
 	gated_tau = baseline_tau * gate
-	return {
+	metrics = {
 		**_torque_metrics_for_command("ungated", baseline_tau, ideal_tau, valid_time, sample_rate),
 		**_torque_metrics_for_command("gated", gated_tau, ideal_tau, valid_time, sample_rate),
 		"mean_gate": _safe_mean(gate, valid_time.expand_as(gate)),
@@ -608,6 +609,54 @@ def metrics_for_given_gate(
 		"gate_below_half_fraction": _safe_mean((gate < 0.5).float(), valid_time.expand_as(gate)),
 		**gate_dynamics_metrics(gate, valid_time, sample_rate=sample_rate),
 	}
+	return _add_retention_semantics(metrics, "ungated", "gated")
+
+
+def _add_retention_semantics(
+	metrics: Dict[str, float],
+	ungated_prefix: str,
+	gated_prefix: str,
+) -> Dict[str, float]:
+	"""Expose adequacy and retention as two different quantities.
+
+	The historical ``*_retained_aligned_torque`` field is normalized by the
+	*ideal* aligned command.  It is therefore an aligned-command adequacy, not
+	the fraction of the ungated estimator that survives gating.  The paper's
+	``kappa`` is the latter ratio.  ``*_capped_overlap`` has the same ideal
+	denominator and is likewise an adequacy; its retention is gated / ungated.
+	Keep the historical fields for archived reports, but write explicit names
+	so new experiments cannot silently mix the two denominators.
+	"""
+	ungated = metrics.get(f"{ungated_prefix}_retained_aligned_torque")
+	gated = metrics.get(f"{gated_prefix}_retained_aligned_torque")
+	metrics[f"{ungated_prefix}_aligned_command_adequacy"] = ungated
+	metrics[f"{gated_prefix}_aligned_command_adequacy"] = gated
+	if (
+		ungated is None
+		or gated is None
+		or ungated != ungated
+		or gated != gated
+		or abs(ungated) < 1e-12
+	):
+		metrics["gate_retention_ratio"] = float("nan")
+	else:
+		metrics["gate_retention_ratio"] = gated / ungated
+
+	ungated_overlap = metrics.get(f"{ungated_prefix}_capped_overlap")
+	gated_overlap = metrics.get(f"{gated_prefix}_capped_overlap")
+	metrics[f"{ungated_prefix}_capped_overlap_adequacy"] = ungated_overlap
+	metrics[f"{gated_prefix}_capped_overlap_adequacy"] = gated_overlap
+	if (
+		ungated_overlap is None
+		or gated_overlap is None
+		or ungated_overlap != ungated_overlap
+		or gated_overlap != gated_overlap
+		or abs(ungated_overlap) < 1e-12
+	):
+		metrics["capped_overlap_retention_ratio"] = float("nan")
+	else:
+		metrics["capped_overlap_retention_ratio"] = gated_overlap / ungated_overlap
+	return metrics
 
 
 def _torque_metrics_for_command(

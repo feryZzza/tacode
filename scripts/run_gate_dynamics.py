@@ -140,8 +140,10 @@ def summarize(gate: torch.Tensor, batch: WindowBatch) -> Dict[str, float]:
 	return {
 		"x_opp": m.get("gated_wrong_torque_product_integral"),
 		"wrong_direction_fraction": m.get("gated_wrong_direction_ratio"),
-		"aligned_command_retention": m.get("gated_retained_aligned_torque"),
-		"capped_overlap_retention": m.get("gated_capped_overlap"),
+		"aligned_command_retention": m.get("gate_retention_ratio"),
+		"aligned_command_adequacy": m.get("gated_aligned_command_adequacy"),
+		"capped_overlap_retention": m.get("capped_overlap_retention_ratio"),
+		"capped_overlap_adequacy": m.get("gated_capped_overlap_adequacy"),
 		"tracking_rmse": m.get("gated_tracking_rmse"),
 		"mean_abs_torque_rate": m.get("gated_mean_abs_torque_rate"),
 		"full_shutdown_fraction": m.get("full_shutdown_fraction"),
@@ -151,7 +153,8 @@ def summarize(gate: torch.Tensor, batch: WindowBatch) -> Dict[str, float]:
 		"gate_transitions_per_minute": m.get("gate_transitions_per_minute"),
 		"mean_gate": m.get("mean_gate"),
 		"ungated_x_opp": m.get("ungated_wrong_torque_product_integral"),
-		"ungated_retention": m.get("ungated_retained_aligned_torque"),
+		"ungated_aligned_command_adequacy": m.get("ungated_aligned_command_adequacy"),
+		"ungated_capped_overlap_adequacy": m.get("ungated_capped_overlap_adequacy"),
 		"ungated_tracking_rmse": m.get("ungated_tracking_rmse"),
 		"ungated_mean_abs_torque_rate": m.get("ungated_mean_abs_torque_rate"),
 	}

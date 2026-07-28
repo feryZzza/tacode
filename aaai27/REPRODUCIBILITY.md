@@ -12,10 +12,12 @@ stochasticity; they are not treated as independent participant replicates. The
 primary uncertainty statement is instead the percentile-bootstrap 95% interval
 over 15 leave-one-subject-out folds.
 
-The historical experiment reports do not record the exact CPU/GPU models,
-memory, operating system, or package versions used for every run. Accordingly,
-the official checklist marks the computing-infrastructure item as `no`; this
-file does not reconstruct or guess that metadata.
+The completed server run records an NVIDIA A100 80GB PCIe GPU (driver
+570.211.01), 503 GB host memory, Ubuntu 22.04.5 (Linux 6.2.1), Python 3.12, and
+PyTorch 2.11.0 with CUDA 12.8. The official checklist therefore marks the
+computing-infrastructure item as `partial`: the CPU model and a complete
+machine-readable package lock were not captured. The listed values describe
+the final server suite, not every historical exploratory run.
 
 ## Expected data layout
 
@@ -35,9 +37,9 @@ training-held-out tasks rather than fully unseen tasks.
 Use Python 3 with the packages in the repository requirements file. A
 CUDA-enabled PyTorch environment is recommended for the full suite. Commands
 below accept `PY`, `DEVICE`, `DATA_ROOT`, `GPUS`, and worker-count overrides.
-The final package should record an environment lock and the actual accelerator
-model before the public release; these were not recoverable from the archived
-reports used for the anonymous manuscript.
+The public release should still add a machine-readable environment lock; the
+hardware and core framework versions used for the final suite are recorded in
+the supplement.
 
 ## End-to-end commands
 
@@ -59,6 +61,17 @@ PY=python3 DEVICE=cuda DATA_ROOT=data/Parsed \
 
 # Rebuild summary files from completed report JSON files.
 PY=python3 scripts/reproduce_aaai.sh summary
+
+# Final gate audit: reselect on validation data, then evaluate the actual
+# all-command-channel gate with exact-retention randomized controls, dynamics,
+# transients, and paired windows.
+PY=python3 DATA_ROOT=data/Parsed scripts/run_gate_reselection.sh
+PY=python3 DATA_ROOT=data/Parsed POLICY_ROOT=reports/aaai27_gate_reselection \
+  scripts/run_aaai27_gate_suite.sh
+PY=python3 scripts/aggregate_reverse_ablation.py --reports-dir reports
+PY=python3 scripts/aggregate_aaai27_suite.py --reports-dir reports
+PY=python3 scripts/validate_aaai27_final_gate_audit.py --reports-dir reports
+PY=python3 scripts/extract_aaai27_gate_numbers.py --reports-dir reports
 ```
 
 For high-core-count machines, the server run used explicit numerical-library
@@ -129,8 +142,13 @@ the 200 Hz sampling interval, in `Nm kg^-1 s^-1`; it is not a kinematic jerk.
 Legacy JSON/TSV keys containing `wrong_energy` and `jerk` are retained only for
 backward compatibility with archived reports.
 
-The archived local package does not contain the full per-timestep main-suite
-outputs needed to recompute random-shutdown controls, exact closure rates,
-shutdown durations, detection latency, or a rate-limited gate. Those analyses
-require reevaluation from the server checkpoints and parsed 15-participant
-dataset; they must not be inferred from the aggregate TSV files.
+The tracked aggregate JSON is sufficient to audit manuscript numbers, but not
+to regenerate per-window randomization, latency, or paired results. Those
+analyses require the server checkpoints, parsed 15-participant dataset, and
+stage-level TSV/NPZ outputs. New runs must use the reselected policy reports
+under `reports/aaai27_gate_reselection/seed*/`, the actual all-channel command
+gate, a fixed corruption seed, and the explicit `gate_retention_ratio`; the
+Detector-gate AUROC subset is a diagnostic policy and must not replace the
+actuation channels. The same distinction applies to capped overlap:
+`capped_overlap_retention_ratio` is gated over ungated, whereas
+`*_capped_overlap_adequacy` is normalized by the ideal command.

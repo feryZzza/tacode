@@ -599,7 +599,15 @@ def evaluate_all(
 	gate_softness, gate_deadband, gate_policy_info = select_gate_on_val(model, datasets, groups, args, device, uncertainty_ref, risk_refs)
 	args.selected_gate_softness = gate_softness
 	args.selected_gate_deadband = gate_deadband
-	results["_gate_policy"] = {"softness": gate_softness, "deadband": gate_deadband, **gate_policy_info}
+	results["_gate_policy"] = {
+		"softness": gate_softness,
+		"deadband": gate_deadband,
+		# The actuation gate uses the full causal command-time pool.  The
+		# validation-selected Detector-gate subset is stored separately under
+		# `_detector_policy` and is only an AUROC evaluation policy.
+		"gate_signals": ",".join(_parse_csv(args.detector_online_signals)),
+		**gate_policy_info,
+	}
 	detector_signals, online_detector_signals, detector_policy_info = select_detector_signals_on_val(
 		model, datasets, groups, args, device, risk_refs
 	)
@@ -899,9 +907,11 @@ def select_gate_on_val_x_opp(
 		}
 	)
 	if not best_info.get("constraints_met", False):
-		# 没有可行点时仍返回最优候选，但把状态写进报告，让汇总脚本能把该 run 标红。
+		# 没有可行点时仍返回原目标分数最高的不可行候选，但把状态写进报告，
+		# 让汇总脚本能把该 run 标红；最终 validator 会拒绝这种 run。
 		best_info["selection_warning"] = (
-			"no candidate satisfied all six clean-side constraints; reported point is the least-violating one"
+			"no candidate satisfied all six clean-side constraints; reported point is the "
+			"highest-scoring infeasible candidate and must not be used as a final operating point"
 		)
 	# 选出的 rate limit 要回写到 args，测试集评估才会用同一工作点。
 	args.gate_max_fall_per_step = best[2]
@@ -937,8 +947,10 @@ def _score_gate_candidate(
 		max_shutdowns_per_minute=args.gate_clean_max_shutdowns_per_minute,
 	)
 	ungated_retained = clean_ungated.get("gated_retained_aligned_torque", 0.0) or 0.0
+	ungated_overlap = clean_ungated.get("gated_capped_overlap", 0.0) or 0.0
 	ungated_rate = clean_ungated.get("gated_mean_abs_torque_rate", float("nan"))
 	clean_retained_ratio = _safe_ratio(clean.get("gated_retained_aligned_torque"), ungated_retained)
+	clean_overlap_ratio = _safe_ratio(clean.get("gated_capped_overlap"), ungated_overlap)
 	clean_rate_ratio = _safe_ratio(clean.get("gated_mean_abs_torque_rate"), ungated_rate, default=1.0)
 
 	x_opp_reductions: List[float] = []
@@ -989,10 +1001,22 @@ def _score_gate_candidate(
 		"val_clean_x_opp": clean.get("gated_wrong_torque_product_integral", float("nan")),
 		"val_fault_x_opp": sum(v["x_opp"] for v in per_fault.values()) / max(len(per_fault), 1),
 		"val_clean_tracking_rmse": clean.get("gated_tracking_rmse", float("nan")),
-		"val_clean_capped_overlap_retention": clean.get("gated_capped_overlap", float("nan")),
+		"val_clean_capped_overlap_adequacy": clean.get(
+			"gated_capped_overlap_adequacy",
+			clean.get("gated_capped_overlap", float("nan")),
+		),
+		"val_clean_capped_overlap_retention": clean_overlap_ratio,
 		"val_clean_full_shutdown_fraction": clean.get("full_shutdown_fraction", float("nan")),
 		"val_clean_shutdowns_per_minute": clean.get("shutdowns_per_minute", float("nan")),
 		"val_clean_mean_abs_torque_rate": clean.get("gated_mean_abs_torque_rate", float("nan")),
+		# The historical "retained aligned torque" metric is normalized by
+		# ideal command (adequacy).  The paper's retention is gated / ungated.
+		"val_clean_aligned_command_adequacy": clean.get(
+			"gated_aligned_command_adequacy",
+			clean.get("gated_retained_aligned_torque", float("nan")),
+		),
+		"val_clean_aligned_command_retention": clean_retained_ratio,
+		# Historical aliases retained for archived report readers.
 		"val_clean_aligned_retention": clean.get("gated_retained_aligned_torque", float("nan")),
 		"val_clean_retained_ratio": clean_retained_ratio,
 		"val_clean_torque_rate_ratio": clean_rate_ratio,

@@ -57,20 +57,6 @@ def fmt(value: Any) -> str:
 #: `aaai27_gate_numbers.json`（由 extract_aaai27_gate_numbers.py 生成）。
 GATE_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
 	(
-		"§1 工作点重选（val 侧六项 clean 约束；跨 3 seed）",
-		[
-			("gate_reselection.objective", "x_opp"),
-			("gate_reselection.val_clean_x_opp.mean", "0.100"),
-			("gate_reselection.val_fault_x_opp.mean", "0.113"),
-			("gate_reselection.val_clean_tracking_rmse.mean", "0.0456"),
-			("gate_reselection.val_clean_capped_overlap_retention.mean", "0.631"),
-			("gate_reselection.val_clean_full_shutdown_fraction.mean", "0.0028"),
-			("gate_reselection.val_clean_shutdowns_per_minute.mean", "0.508"),
-			("gate_reselection.val_clean_mean_abs_torque_rate.mean", "0.258"),
-			("gate_reselection.rate_limit_identical_across_seeds", "False"),
-		],
-	),
-	(
 		"§2 随机化检验（最坏格子必须进正文）",
 		[
 			("gate_baselines.draws", "1000"),

@@ -37,8 +37,16 @@ from typing import Dict, List, Optional, Sequence, Tuple
 METRIC_KEYS = {
 	"x_opp": ("gated_wrong_torque_product_integral", "gated_wrong_energy"),
 	"ungated_x_opp": ("baseline_wrong_torque_product_integral", "baseline_wrong_energy"),
-	"aligned_command_retention": ("gated_retained_aligned_torque",),
-	"capped_overlap_retention": ("gated_capped_overlap",),
+	"aligned_command_retention": ("gate_retention_ratio",),
+	"aligned_command_adequacy": ("gated_aligned_command_adequacy", "gated_retained_aligned_torque"),
+	"ungated_aligned_command_adequacy": (
+		"baseline_aligned_command_adequacy", "baseline_retained_aligned_torque",
+	),
+	"capped_overlap_retention": ("capped_overlap_retention_ratio",),
+	"capped_overlap_adequacy": ("gated_capped_overlap_adequacy", "gated_capped_overlap"),
+	"ungated_capped_overlap_adequacy": (
+		"baseline_capped_overlap_adequacy", "baseline_capped_overlap",
+	),
 	"tracking_rmse": ("gated_tracking_rmse",),
 	"mean_abs_torque_rate": ("gated_mean_abs_torque_rate", "gated_mean_abs_jerk"),
 	"full_shutdown_fraction": ("full_shutdown_fraction",),
@@ -86,7 +94,11 @@ GATE_TSV_COLUMNS = {
 	"x_opp": "x_opp",
 	"ungated_x_opp": "ungated_x_opp",
 	"aligned_command_retention": "aligned_command_retention",
+	"aligned_command_adequacy": "aligned_command_adequacy",
+	"ungated_aligned_command_adequacy": "ungated_aligned_command_adequacy",
 	"capped_overlap_retention": "capped_overlap_retention",
+	"capped_overlap_adequacy": "capped_overlap_adequacy",
+	"ungated_capped_overlap_adequacy": "ungated_capped_overlap_adequacy",
 	"tracking_rmse": "tracking_rmse",
 	"mean_abs_torque_rate": "mean_abs_torque_rate",
 	"full_shutdown_fraction": "full_shutdown_fraction",
@@ -175,6 +187,22 @@ def extract_rows(directory: Path, mode: str, seed: str) -> List[Dict[str, object
 		}
 		for out_key, candidates in METRIC_KEYS.items():
 			row[out_key] = _first_present(payload, candidates)
+		if row.get("aligned_command_retention") is None:
+			gated = _clean(row.get("aligned_command_adequacy"))
+			ungated = _clean(row.get("ungated_aligned_command_adequacy"))
+			row["aligned_command_retention"] = (
+				gated / ungated
+				if gated is not None and ungated is not None and abs(ungated) > 1e-12
+				else None
+			)
+		if row.get("capped_overlap_retention") is None:
+			gated = _clean(row.get("capped_overlap_adequacy"))
+			ungated = _clean(row.get("ungated_capped_overlap_adequacy"))
+			row["capped_overlap_retention"] = (
+				gated / ungated
+				if gated is not None and ungated is not None and abs(ungated) > 1e-12
+				else None
+			)
 		rows.append(row)
 	return rows
 
@@ -347,13 +375,6 @@ def main() -> None:
 		else:
 			incomplete.append(directory.name)
 
-	# full stack 参照，从主 run 直接取，不重跑。
-	for directory in sorted(reports.glob(cli.full_stack_glob)):
-		seed_match = re.search(r"seed(\d+)$", directory.name)
-		if not seed_match:
-			continue
-		rows.extend(extract_rows(directory, "full", seed_match.group(1)))
-
 	# 复用已训好的 ordered-ablation run 补「minus forecasting」这一格。
 	for mode, pattern in REUSED_CELLS.items():
 		for directory in sorted(reports.glob(pattern)):
@@ -368,6 +389,13 @@ def main() -> None:
 		rows.extend(gate_rows)
 	else:
 		incomplete.append(f"{cli.gate_baselines_dir}: 无 gate_baselines_*.tsv，缺 3 个评测侧格子")
+		# 正式汇总由 all_gate_channels 提供 full-stack 参照。只有缺少统一的
+		# gate-baselines 重评时才回退到主 report，避免重复一格并混入另一套故障抽样。
+		for directory in sorted(reports.glob(cli.full_stack_glob)):
+			seed_match = re.search(r"seed(\d+)$", directory.name)
+			if not seed_match:
+				continue
+			rows.extend(extract_rows(directory, "full", seed_match.group(1)))
 
 	summary = summarize(rows)
 	front = pareto(summary, cli.pareto_split, cli.clean_cost_metric)
