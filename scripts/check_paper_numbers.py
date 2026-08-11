@@ -19,6 +19,17 @@ def get(obj: Any, dotted: str) -> Any:
 	cur = obj
 	rest = dotted
 	while rest:
+		# 列表用 `[i]` 下标进入，供 pareto 这类有序数组按前沿位次取值。
+		if isinstance(cur, list):
+			head, _, tail = rest.partition(".")
+			if not (head.startswith("[") and head.endswith("]")):
+				return None
+			try:
+				cur = cur[int(head[1:-1])]
+			except (ValueError, IndexError):
+				return None
+			rest = tail
+			continue
 		if not isinstance(cur, dict):
 			return None
 		if rest in cur:
@@ -33,6 +44,30 @@ def get(obj: Any, dotted: str) -> Any:
 		else:
 			return None
 	return cur
+
+
+def scalar(value: Any) -> float | None:
+	"""取出可比较的标量：collect() 的聚合字典比较 mean，其余按浮点解析。"""
+	if isinstance(value, dict):
+		value = value.get("mean")
+	try:
+		return float(value)  # type: ignore[arg-type]
+	except (TypeError, ValueError):
+		return None
+
+
+def differs(expected: str, value: Any) -> bool:
+	"""稿件值按其自身小数位比较，避免把 0.0074 和 0.00742 判成不一致。"""
+	actual = scalar(value)
+	if actual is None:
+		return True
+	try:
+		want = float(expected)
+	except ValueError:
+		return str(expected) != str(value)
+	decimals = len(expected.partition(".")[2])
+	tolerance = 0.5 * 10 ** (-decimals) if decimals else 0.5
+	return abs(actual - want) > tolerance
 
 
 def fmt(value: Any) -> str:
@@ -62,7 +97,7 @@ GATE_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
 			("gate_baselines.draws", "1000"),
 			("gate_baselines.randomization_n_cells", "120"),
 			("gate_baselines.randomization_worst.random_attenuation.percentile", "1.000"),
-			("gate_baselines.randomization_worst.random_shutdown.percentile", "0.272"),
+			("gate_baselines.randomization_worst.random_shutdown.percentile", "0.000"),
 		],
 	),
 	(
@@ -74,17 +109,33 @@ GATE_GROUPS: list[tuple[str, list[tuple[str, str]]]] = [
 	(
 		"§5 配对双重差分（被试数是硬上限）",
 		[
-			("paired_analysis.n_underpowered_cells", "216"),
+			# 五个指标 × 54 格 = 270；两名留出被试使 bootstrap 退化，全部欠功效。
+			("paired_analysis.n_cells_total", "270"),
+			("paired_analysis.n_underpowered_cells", "270"),
+			("paired_analysis.summary.x_opp.n_ci_excludes_zero", "49"),
+			("paired_analysis.summary.x_opp.n_negative", "48"),
 		],
 	),
 	(
-		"§6 反向消融（七格 × 3 seed；另加 all-gate-channels 参照格，故为 8）",
+		"§6 反向消融（七格 × 3 seed，单一 full-stack 参照）",
 		[
-			# §6 要七格，这里是 8：多出来的 `all_gate_channels` 是评测侧参照
-			# （full stack + 六路门控全开），用来把「去掉某一路」的效应量与
-			# 「什么都不去掉」对齐。它不是第八个消融，但要进 Pareto 才能比。
-			("reverse_ablation.n_cells", "8"),
-			("reverse_ablation.cells_with_three_seeds", "8"),
+			# 去掉了旧表里 `full` 与 `all_gate_channels` 的重复参照，
+			# 现在只有一个 full-stack 参照格，因此正好七格。
+			("reverse_ablation.n_cells", "7"),
+			("reverse_ablation.cells_with_three_seeds", "7"),
+			# 正文按 x_opp 升序引用这七格；pareto 已排序，所以按位次核对，
+			# 前四格在前沿上、后三格被支配。
+			("reverse_ablation.pareto.[0].fault_x_opp", "0.0440"),
+			("reverse_ablation.pareto.[0].clean_cost", "0.968"),
+			("reverse_ablation.pareto.[1].fault_x_opp", "0.0456"),
+			("reverse_ablation.pareto.[1].clean_cost", "0.968"),
+			("reverse_ablation.pareto.[2].fault_x_opp", "0.0458"),
+			("reverse_ablation.pareto.[2].clean_cost", "0.972"),
+			("reverse_ablation.pareto.[3].fault_x_opp", "0.0460"),
+			("reverse_ablation.pareto.[3].clean_cost", "0.986"),
+			("reverse_ablation.pareto.[4].fault_x_opp", "0.0503"),
+			("reverse_ablation.pareto.[5].fault_x_opp", "0.0505"),
+			("reverse_ablation.pareto.[6].fault_x_opp", "0.0553"),
 		],
 	),
 ]
@@ -176,35 +227,37 @@ def main() -> int:
 		print()
 
 	bad = 0
-	for title, keys in groups:
+	diff = 0
+
+	def emit(source: dict, title: str, keys: list[tuple[str, str]]) -> None:
+		nonlocal bad, diff
 		print(f"=== {title}")
 		for key, expected in keys:
-			value = get(numbers, key)
+			value = get(source, key)
 			mark = ""
 			if value is None:
 				mark = "  <== 缺失"
 				bad += 1
+			elif differs(expected, value):
+				mark = "  <== DIFF"
+				diff += 1
 			print(f"  {key:<62} 稿件={expected:<9} suite={fmt(value)}{mark}")
 		print()
+
+	for title, keys in groups:
+		emit(numbers, title, keys)
 
 	gate_path = Path(args.gate_numbers)
 	if gate_path.is_file():
 		gate_numbers = json.loads(gate_path.read_text())
 		for title, keys in GATE_GROUPS:
-			print(f"=== {title}")
-			for key, expected in keys:
-				value = get(gate_numbers, key)
-				mark = ""
-				if value is None:
-					mark = "  <== 缺失"
-					bad += 1
-				print(f"  {key:<62} 稿件={expected:<9} suite={fmt(value)}{mark}")
-			print()
+			emit(gate_numbers, title, keys)
 	else:
 		print(f"=== §1–§6 跳过：{gate_path} 不存在（先跑 extract_aaai27_gate_numbers.py）\n")
 
 	print(f"缺失键数量: {bad}")
-	return 0
+	print(f"不一致键数量: {diff}")
+	return 1 if (bad or diff) else 0
 
 
 if __name__ == "__main__":

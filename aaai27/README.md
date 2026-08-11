@@ -9,11 +9,19 @@
 - `references.bib` — 参考文献。
 - `aaai2027.sty`、`aaai2027.bst` — AAAI-27 官方 author kit（2026 年 5 月版）原文件，不要修改。
 - `figures/` — 投稿用矢量 PDF，附 SVG 源和 600 dpi PNG 预览。
-- `figures/data/timeseries_overview.npz` — 图 1(c) 的逐 timestep 导出数据。
+- `figures/data/timeseries_overview.npz` — 图 1(a) 与图 2(b) 的逐 timestep 导出数据。
+- `supplement.tex` — 匿名补充材料，另投 Supplementary Document。
 - `ReproducibilityChecklist.tex` — AAAI-27 官方清单原题与逐项回答，单独提交。
-- `REPRODUCIBILITY.md` — 匿名补充材料中的运行顺序、数据布局与核验方法。
+
+以下是仓库内的工作笔记，**不随稿件提交**：
+
+- `REPRODUCIBILITY.md` — 运行顺序、数据布局与核验方法。
+- `RESULTS_PROVENANCE.md` — 每个稿件数字对应的 run 目录与提取路径。
 - `FIGURE_QA.md` — 图件数据来源、统计语义和 AAAI 可读性审计。
 - `OUTLINE.md`、`DATA_REQUIREMENTS.md`、`EXPERIMENTS_TODO.md` — 写作与实验规划笔记。
+
+构建产物（`*.aux`/`*.bbl`/`*.blg`/`*.log`/`*.pdf`）不入库，`make clean` 会清掉；
+`figures/*.pdf` 是例外，入库以便无 TeX 环境时也能核对图件。
 
 ## 编译
 
@@ -35,7 +43,7 @@ make submission  # 英文正文 + 官方复现清单 + 匿名补充材料
 | 控制后果、指令保留、力矩变化率 | `table2_safety.tsv`、`paper_numbers.json` |
 | 消融、压力迁移 | `paper_numbers.json` |
 | LOSO 逐折效应量 | `loso_effect.json` |
-| 图 1(c) 门控时序 | `figures/data/timeseries_overview.npz` |
+| 图 1(a) teaser 与图 2(b) 门控时序 | `figures/data/timeseries_overview.npz` |
 
 默认汇总目录是 `../reports/v2_fc_paper_suite`（`SUITE_DIR` 可覆盖）。`reports/` 不入版本库，
 从指标包解开：
@@ -47,12 +55,13 @@ tar xzf ../aaai27_metrics.tar.gz -C ..
 脚本每次运行都会打印数据来源，**这一行是唯一可靠的验收凭据**：
 
 ```
-data sources: detection=suite, macro=suite, safety=suite, ablation=suite, stress=suite, loso=suite, overview=export
+data sources: detection=suite, macro=suite, safety=suite, ablation=suite, stress=suite, loso=suite, overview=export, teaser=export
 ```
 
-七项全是 `suite`/`export` 才是对的。出现 `fallback` 说明汇总目录没读到，图里是脚本内置的
-`FALLBACK` 常量（旧数字）；出现 `overview=schematic` 说明 npz 没读到，图 1(c) 退成了示意
-曲线，与 caption 声明的「真实导出」不符。**两种退化都不会报错，退出码仍是 0。**
+八项全是 `suite`/`export` 才是对的。出现 `fallback` 说明汇总目录没读到，图里是脚本内置的
+`FALLBACK` 常量（旧数字）；出现 `overview=schematic` 说明 npz 没读到，图 2(b) 退成了示意
+曲线，与 caption 声明的「真实导出」不符；出现 `teaser=absent` 说明第一页那张图没画出来。
+**这三种退化都不会报错，退出码仍是 0。**
 
 `make figures` 和 `make check-figures` 已经把路径钉死并在缺文件时主动失败。如果直接调脚本，
 注意它的默认路径是相对仓库根目录的，必须显式给参数：
@@ -64,7 +73,7 @@ python3 scripts/draw_aaai_figures.py \
     --overview-timeseries aaai27/figures/data/timeseries_overview.npz
 ```
 
-## 图 1(c) 溯源
+## 图 1(a) / 图 2(b) 溯源
 
 npz 由 `../scripts/export_timeseries.py` 从 checkpoint 重放单个窗口导出，`meta` 字段自带
 完整溯源：种子 7、`test_id/encoder_dropout`、参与者 BT16、trial
@@ -76,9 +85,19 @@ npz 由 `../scripts/export_timeseries.py` 从 checkpoint 重放单个窗口导�
 蓝-灰-红发散渐变表示 AUROC。每组分类对都带第二编码（marker 形状、填充或直接标注），
 保证色觉障碍下可读。投稿 PDF 中的字形转成轮廓，因而既没有 Type 3，也没有 AAAI
 author kit 要求移除的 Identity-H 字体；可编辑文字保留在配套 SVG 中。所有图内文字按
-至少 9.2 pt 生成，线宽至少 0.5 pt。
+8.5 pt 生成（正文 10 pt），线宽至少 0.5 pt。
 
-四张全宽图按 AAAI 正文宽度 7.0 in（`figure*`）出，`fig_stress_transfer` 按单栏 3.35 in（`figure`）出。
+**图内字号看的是纸面磅值，不是代码里的磅值。** `bbox="tight"` 会把画布裁到内容边界，
+原生宽因此不等于 `figsize`；再按 `\includegraphics[width=...]` 缩放，纸面字号就是
+`代码磅值 x 排版宽 / 原生宽`。三张正文图曾被裁成 5.90 / 6.88 / 6.55 in 又统一按
+`0.72\textwidth` 放置，同一个 9.2 pt 印出来是 7.86 / 6.74 / 7.08 pt。现在出图时
+`fit_canvas_to_print_width` 把画布收敛到「裁剪后正好等于排版宽」，`assert_prints_one_to_one`
+在原生宽偏离超过 0.01 in 时直接失败，七张图实测 8.48–8.54 pt。
+
+五张跨栏图按 AAAI 正文宽度 7.0 in（`figure*`）出；`fig_stress_transfer` 与 teaser 按单栏
+3.35 in（`figure`）出。teaser 只能是单栏：`figure*` 是双栏浮动体，LaTeX 不会把它排到带
+`\twocolumn` 标题块的第一页，通栏版本必然被推到第 2 页。
+`.tex` 里的宽度必须和脚本里传给 `save()` 的 `print_width_in` 一致，改一处就要改另一处。
 
 ## 已完成：服务器侧的 S1 / S2（2026-07-27）
 
@@ -170,16 +189,20 @@ done
 全文不超过 9 页；伦理声明算在 7 页正文内，附录另投 Supplementary Document
 （正文 7 月 28 日截稿，附录 7 月 31 日）。
 
-2026-07-27 的上一版曾用 TinyTeX 完成以下验收：
+验收命令（TinyTeX 在本机 `$HOME/.TinyTeX`）：
 
 ```bash
 export PATH=$HOME/bin:$HOME/.TinyTeX/bin/x86_64-linux:$PATH
-make            # 英文，pdflatex
+make submission
+pdfinfo main.pdf | grep Pages                        # 必须 <= 9
+pdftotext -f 8 -l 8 main.pdf - | grep -n References  # 必须是 1:References
+grep -c Overfull main.log                            # 必须是 0
 ```
 
-上一版编译结果：英文 8 页；正文和伦理声明止于第 7 页，参考文献从第 7 页开始并延续到
-第 8 页，overfull / undefined / error 均为 0。日志有两处普通段落的 underfull hbox
-以及两处双栏页底 underfull vbox，不造成越界。消融和压力/LOSO 全图移入 3 页匿名补充
-材料，主文保留对应数值和统计限定。官方复现清单单独编译为 2 页。当前工作环境已没有
-`pdflatex`，因此 2026-07-28 的英文修订必须在服务器或另一台 TeX Live 机器上重新执行
-`make submission`，不能沿用上一版页数作为最终验收。
+当前封版结果：`main.pdf` 8 页，正文与伦理声明止于第 7 页，参考文献自第 8 页第一行开始；
+overfull / undefined / error 均为 0；三个 PDF 均无 Type 3 字形、字体全部嵌入、元数据不含
+作者信息。`supplement.pdf` 7 页，`ReproducibilityChecklist.pdf` 2 页。消融与压力/LOSO
+全图在补充材料中，主文保留对应数值和统计限定。
+
+改动稿件后必须重新执行上面整套验收，不能沿用上一版页数——正文接近 7 页上限，一句话的
+增删就会把参考文献推离第 8 页首行。

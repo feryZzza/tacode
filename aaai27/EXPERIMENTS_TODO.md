@@ -159,10 +159,11 @@ reports/aaai27_logs/
 
 ### 4. 重新汇总 reverse ablation
 
-这一步不训练。训练侧格子继续读取已有 `v2_reverse_*` 与
-`v2_ablation_prob_aug_recon_seed*` 报告；full-stack、selected-subset 与
-minus-staleness 改用第 3 步同一前向/同一故障实现产生的新 gate-baselines 表。
-当前汇总器会用 `all_gate_channels` 作为唯一 full-stack 参照，不再同时混入旧 `full` 格：
+这一步不训练。训练侧四格现在优先读 `reports/aaai27_reverse_cells/` 与
+`reports/aaai27_reverse_forecast/`（P1 的统一协议重评产物，见下），缺失时才回落到归档
+`v2_reverse_*`；full-stack、selected-subset 与 minus-staleness 用第 3 步同一前向/同一故障
+实现产生的新 gate-baselines 表。汇总器以 `all_gate_channels` 为唯一 full-stack 参照，
+并对留出任务与门控协议做一致性检查，不一致的批次会被剔除并写进 provenance：
 
 ```bash
 $PY scripts/aggregate_reverse_ablation.py \
@@ -170,8 +171,8 @@ $PY scripts/aggregate_reverse_ablation.py \
   --output-dir reports/aaai27_reverse_ablation
 ```
 
-该表仍属于描述性分析：训练侧旧报告与 gate-only 格不是同一次统一前向，不能据此宣称
-某个组件被严格支配。若要写强组件因果结论，执行下面的 P1。
+P1 复评后七格共享 split 与门控协议，因此可以写「被支配格劣于前沿」；但前沿内部四格跨度
+仅 0.0020 且 `prob_aug_recon` 跨 seed 排名不稳，仍不能宣称某一组件配置最优。
 
 ### 5. 汇总、自动验收、提取数字
 
@@ -270,9 +271,29 @@ make -C aaai27 submission
 7. 对三个最终 PDF 检查页数、正文/参考文献边界、overfull/undefined、字体嵌入、
    PDF 元数据匿名性和逐页视觉结果。只有这些检查全部通过，才把 P0 后的版本称为最终稿。
 
-## P1：只有要保留强 reverse-ablation 结论时才运行
+## P1：已完成（公平复评）
 
-P0 足以完成最终门控主张。若正文仍想声称“完整组件栈优于移除任一组件”，则必须把每个
+**状态：已执行，正文结论据此改写。** `scripts/run_reverse_forecast_cell_reeval.sh` 与
+`scripts/run_reverse_cells_reeval.sh` 把四个训练侧格子（`prob_aug_recon`、
+`det_aug_recon_fc`、`prob_aug_fc`、`prob_aug_recon_fc_nofault`）× 3 seed 共 12 个 run
+在同一 commit 上纯 eval 重跑：复用已有 checkpoint 不重训，同一 split
+（`jump,cutting,lift_weight,lunges`）、同一 `CORE_FAULTS`、同一 216 候选网格
+（6 softness × 6 fall × 6 rise）、每格 `--select-gate-on-val
+--gate-selection-objective x_opp`、`limit_trials=0`。
+
+触发原因是两处口径缺陷：
+
+1. `v2_reverse_prob_aug_recon_seed*` 用 `stairs,ramp` 留出，与主 split 不同，改变了
+   `test_id`/`test_ood` 的任务成员，其数字曾以「0.0810，worst by a wide margin」进入正文；
+2. 归档 eval 混了三种门控选择协议（旧目标 `dimensionless_relative_wrong_v2` 无网格、
+   x_opp 但仅 6 候选、x_opp 216 候选），使「组件差异」与「门控搜索空间差异」叠加。
+
+复评后前沿由 3 格变 4 格，跨度 0.0020，到最近被支配格有 0.0043 间隔；`prob_aug_recon`
+均值最低但跨 seed 排名 4/3/1，因此正文只写「necessity holds only against the dominated
+variants」，不写前沿内部排序。`aggregate_reverse_ablation.py` 现有 split-lock 与门控协议
+指纹，`validate_aaai27_final_gate_audit.py` 会在协议不一致时失败。
+
+以下为原始要求，供复核：若正文仍想声称“完整组件栈优于移除任一组件”，则必须把每个
 已有 reverse-ablation checkpoint 都在当前 commit 上重新 eval，并对每个模型分别在
 validation 上重选门控工作点；所有格必须使用同一 fault list、split、窗口、随机种子和
 六通道定义。checkpoint 已存在时不重训。

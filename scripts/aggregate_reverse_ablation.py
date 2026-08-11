@@ -73,9 +73,24 @@ MODE_LABELS = {
 
 RUN_PATTERN = re.compile(r"^v2_reverse_(?P<mode>.+)_seed(?P<seed>\d+)$")
 
+#: 统一门控协议的重评产物（run_reverse_cells_reeval.sh）。归档的 v2_reverse_* eval 用的
+#: 门控选择协议彼此不同：det_aug_recon_fc 三个 seed 与 prob_aug_fc seed7 用旧目标
+#: dimensionless_relative_wrong_v2（无速率网格），prob_aug_fc seed13/23 与 nofault 用
+#: x_opp 但只有 6 个候选。主重选和另外几格是 216 候选带速率限幅。混在一张 Pareto 表里
+#: 会把「组件差异」和「门控搜索空间差异」叠在一起。优先读重评，缺失才回落到归档 run。
+REEVAL_PATTERN = re.compile(r"^(?P<mode>.+)_seed(?P<seed>\d+)$")
+
 #: §6 的七格里，「minus forecasting」不需要新训练：ordered ablation 的
 #: `prob_aug_recon`（无 forecast 头）就是这一格，三个 seed 都已训好。复用而不重训。
-REUSED_CELLS = {"prob_aug_recon": "v2_ablation_prob_aug_recon_seed*"}
+#: 但那批老 eval 没有算 x_opp，Pareto 需要它，所以 run_reverse_forecast_cell_reeval.sh
+#: 用同一批 checkpoint、同一 split、x_opp 目标重跑了一遍（纯 eval，不重训）。优先读
+#: 重评产物；只有缺失时才回落到老 ablation 报告。
+REUSED_CELLS = {
+	"prob_aug_recon": (
+		"aaai27_reverse_forecast/seed*",
+		"v2_ablation_prob_aug_recon_seed*",
+	)
+}
 
 #: 另两格（minus staleness、validation-selected-subset）是纯评测侧的门控通道差异：
 #: 同一批 full-stack checkpoint、同一批窗口，只改门控读哪几路。它们由
@@ -117,6 +132,8 @@ def parse_args() -> argparse.Namespace:
 	p.add_argument("--pareto-split", default="test_id")
 	p.add_argument("--gate-baselines-dir", default="aaai27_gate_baselines",
 		help="§2 的产出目录，供 minus-staleness / selected-subset 两格（纯评测侧）")
+	p.add_argument("--reeval-dir", default="aaai27_reverse_cells",
+		help="统一门控协议的训练侧格子重评目录（优先于归档的 v2_reverse_*）")
 	return p.parse_args()
 
 
@@ -160,6 +177,45 @@ def _clean(value: object) -> Optional[float]:
 			return None
 	value = float(value)
 	return None if math.isnan(value) or math.isinf(value) else value
+
+
+def gate_protocol(directory: Path) -> Optional[Dict[str, object]]:
+	"""读一个 run 的门控选择协议指纹：目标函数 + 候选网格规模。
+
+	同一张 Pareto 表里的格子必须共享这个指纹，否则「组件差异」会和「门控搜索空间
+	差异」混在一起——旧归档 run 只搜 6 个 softness，新重选搜 216 个含速率限幅的候选。
+	"""
+	report_path = directory / "reliability_report.json"
+	if not report_path.is_file():
+		return None
+	try:
+		report = json.loads(report_path.read_text(encoding="utf-8"))
+	except (OSError, json.JSONDecodeError):
+		return None
+	policy = report.get("results", {}).get("_gate_policy", {})
+	if not isinstance(policy, dict):
+		return None
+	return {
+		"selection_objective": policy.get("selection_objective"),
+		"n_candidates": len(policy.get("candidates") or []),
+	}
+
+
+def heldout_tasks(directory: Path) -> Optional[frozenset]:
+	"""读取一个 run 的留出任务集合；读不到就返回 None。"""
+	report_path = directory / "reliability_report.json"
+	if not report_path.is_file():
+		return None
+	try:
+		report = json.loads(report_path.read_text(encoding="utf-8"))
+	except (OSError, json.JSONDecodeError):
+		return None
+	raw = report.get("args", {}).get("heldout_tasks")
+	if isinstance(raw, str):
+		return frozenset(item.strip() for item in raw.split(",") if item.strip())
+	if isinstance(raw, (list, tuple)):
+		return frozenset(str(item).strip() for item in raw if str(item).strip())
+	return None
 
 
 def extract_rows(directory: Path, mode: str, seed: str) -> List[Dict[str, object]]:
@@ -364,24 +420,78 @@ def main() -> None:
 	reports = Path(cli.reports_dir)
 	rows: List[Dict[str, object]] = []
 	incomplete: List[str] = []
+	split_mismatch: List[str] = []
+
+	# split-lock：训练侧格子的留出任务必须和 full-stack 参照完全一致。留出任务不同会
+	# 改变 test_id/test_ood 的任务成员，那样的 Pareto 比较是在两套不同的评测集上做的，
+	# 必须剔除而不是静默混入（否则错误批次会一路进正文）。
+	reference_split: Optional[frozenset] = None
+	for directory in sorted(reports.glob(cli.full_stack_glob)):
+		reference_split = heldout_tasks(directory)
+		if reference_split:
+			break
+
+	gate_protocols: Dict[str, Dict[str, object]] = {}
+
+	def accept(directory: Path, mode: str, seed: str) -> List[Dict[str, object]]:
+		if reference_split is not None:
+			actual = heldout_tasks(directory)
+			if actual is not None and actual != reference_split:
+				split_mismatch.append(
+					f"{directory.name}: heldout_tasks={sorted(actual)} != "
+					f"{sorted(reference_split)}"
+				)
+				return []
+		protocol = gate_protocol(directory)
+		if protocol is not None:
+			gate_protocols[f"{mode}/seed{seed}"] = protocol
+		return extract_rows(directory, mode, seed)
+
+	# 训练侧格子：先收统一协议的重评，再用归档 run 补它没覆盖到的 (mode, seed)。
+	# 同一格里不允许混两种门控协议，所以按 mode 整体取舍，而不是按 seed 逐个回落。
+	reeval_root = reports / cli.reeval_dir
+	reeval_rows: Dict[str, List[Dict[str, object]]] = defaultdict(list)
+	for directory in sorted(reeval_root.glob("*_seed*")):
+		match = REEVAL_PATTERN.match(directory.name)
+		if not match:
+			continue
+		extracted = accept(directory, match.group("mode"), match.group("seed"))
+		if extracted:
+			reeval_rows[match.group("mode")].extend(extracted)
 
 	for directory in sorted(reports.glob("v2_reverse_*")):
 		match = RUN_PATTERN.match(directory.name)
 		if not match:
 			continue
-		extracted = extract_rows(directory, match.group("mode"), match.group("seed"))
+		mode = match.group("mode")
+		if mode in reeval_rows:
+			continue
+		extracted = accept(directory, mode, match.group("seed"))
 		if extracted:
 			rows.extend(extracted)
-		else:
+		elif directory.name not in " ".join(split_mismatch):
 			incomplete.append(directory.name)
+	for mode_rows in reeval_rows.values():
+		rows.extend(mode_rows)
 
-	# 复用已训好的 ordered-ablation run 补「minus forecasting」这一格。
-	for mode, pattern in REUSED_CELLS.items():
-		for directory in sorted(reports.glob(pattern)):
-			seed_match = re.search(r"seed(\d+)$", directory.name)
-			if not seed_match:
-				continue
-			rows.extend(extract_rows(directory, mode, seed_match.group(1)))
+	# 复用已训好的 checkpoint 补「minus forecasting」这一格：按优先级取第一个能产出
+	# 完整 x_opp 的来源，避免同一格混入两批不同口径的 eval。
+	for mode, patterns in REUSED_CELLS.items():
+		for pattern in patterns:
+			candidate: List[Dict[str, object]] = []
+			for directory in sorted(reports.glob(pattern)):
+				seed_match = re.search(r"seed(\d+)$", directory.name)
+				if not seed_match:
+					continue
+				candidate.extend(accept(directory, mode, seed_match.group(1)))
+			# 这一格必须带 x_opp，否则 Pareto 的算子交集会归零、前沿被清空。
+			if candidate and any(
+				_clean(row.get("x_opp")) is not None
+				for row in candidate
+				if row.get("fault_operator") != "clean"
+			):
+				rows.extend(candidate)
+				break
 
 	# 评测侧的三格：minus staleness / validation-selected subset / all channels。
 	gate_rows = extract_gate_rows(reports / cli.gate_baselines_dir)
@@ -443,6 +553,16 @@ def main() -> None:
 				"n_cells": len(modes),
 				"cells_required": 7,
 				"incomplete_runs": incomplete,
+				"reference_heldout_tasks": sorted(reference_split) if reference_split else [],
+				"excluded_split_mismatch": split_mismatch,
+				"gate_protocols": gate_protocols,
+				"gate_protocol_uniform": len(
+					{
+						(p.get("selection_objective"), p.get("n_candidates"))
+						for p in gate_protocols.values()
+					}
+				)
+				<= 1,
 				"clean_cost_metric": cli.clean_cost_metric,
 				"pareto_split": cli.pareto_split,
 				"pareto_rule": "dominated iff another mode has <= fault X_opp and no worse clean cost, with a strict improvement",
@@ -469,6 +589,20 @@ def main() -> None:
 		print(f"  {mode:34s} seeds={','.join(seeds)}{flag}")
 	if incomplete:
 		print(f"未完成（无 reliability_report.json）：{', '.join(incomplete)}")
+	if split_mismatch:
+		print(f"\n因 split 不一致被剔除（留出任务={sorted(reference_split or [])}）：")
+		for item in split_mismatch:
+			print(f"  - {item}")
+	fingerprints = {
+		(p.get("selection_objective"), p.get("n_candidates")) for p in gate_protocols.values()
+	}
+	if len(fingerprints) > 1:
+		print("\n门控协议不一致（同一张 Pareto 表里混了不同搜索空间）：")
+		for name, protocol in sorted(gate_protocols.items()):
+			print(
+				f"  {name:44s} obj={protocol.get('selection_objective')} "
+				f"n_candidates={protocol.get('n_candidates')}"
+			)
 	print(f"\nPareto ({cli.pareto_split}, cost={cli.clean_cost_metric}):")
 	for point in front:
 		mark = "*" if point["on_pareto_front"] else " "

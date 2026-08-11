@@ -353,6 +353,43 @@ def check_aggregate_status(reports: Path, errors: List[str]) -> None:
 		errors.append(
 			f"{reverse_path}: duplicate full references (full and all_gate_channels)"
 		)
+	# split-lock：所有七格必须在同一 split 上评测。一个留出任务不同的批次会改变
+	# test_id/test_ood 的任务成员，其数字无法与其余格比较，行数校验查不出来。
+	provenance_path = reports / "aaai27_reverse_ablation" / "provenance_reverse.json"
+	provenance = read_json(provenance_path, errors)
+	if isinstance(provenance, dict):
+		if int(provenance.get("n_cells", 0) or 0) != int(
+			provenance.get("cells_required", 7) or 7
+		):
+			errors.append(
+				f"{provenance_path}: n_cells={provenance.get('n_cells')} != "
+				f"cells_required={provenance.get('cells_required')}"
+			)
+		if not provenance.get("reference_heldout_tasks"):
+			errors.append(f"{provenance_path}: missing reference_heldout_tasks (no split lock)")
+		# 门控协议锁：同一张 Pareto 表里的训练侧格子必须共享选择目标与候选网格规模，
+		# 否则「去掉某组件更差」里混着「那一格搜的候选更少」。
+		protocols = provenance.get("gate_protocols")
+		if not isinstance(protocols, dict) or not protocols:
+			errors.append(f"{provenance_path}: missing gate_protocols (no gate-protocol lock)")
+		elif not provenance.get("gate_protocol_uniform"):
+			seen = sorted(
+				{
+					f"{p.get('selection_objective')}/{p.get('n_candidates')}"
+					for p in protocols.values()
+					if isinstance(p, dict)
+				}
+			)
+			errors.append(
+				f"{provenance_path}: gate protocols differ across cells: {seen}"
+			)
+		front = load_tsv(
+			reports / "aaai27_reverse_ablation" / "pareto.tsv", errors
+		)
+		if not front:
+			errors.append(
+				f"{reverse_path}: empty Pareto front (a cell is missing x_opp)"
+			)
 
 
 def main() -> int:

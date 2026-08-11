@@ -23,7 +23,9 @@
 \renewcommand{\textfraction}{0.06}
 
 % Submission title. Keep Title Case for the AAAI submission.
-\title{From Fault Evidence to Control Consequences: Evaluating Task-Agnostic Exoskeleton Assistance}
+% 标题与 OpenReview 摘要注册时提交的一致。线上记录不动，改稿件这一侧：标题只是标签，
+% 换稿件不涉及内容变化，而线上标题保持原样才天然满足「不做实质性改变」。
+\title{Reliability-Aware Biological Joint Moment Estimation for Risk-Sensitive Task-Agnostic Exoskeleton Assistance}
 \author{Anonymous Submission}
 \affiliations{}
 
@@ -31,67 +33,81 @@
 \maketitle
 
 \begin{abstract}
-Task-agnostic exoskeleton controllers map wearable-sensor histories directly to biological joint moments, so sensor faults can propagate into assistance even when nominal prediction error is low.
-We study deployment-time reliability under participant, task, and synthetic sensor-fault shifts: anomaly evidence should alter the command without unnecessarily suppressing valid assistance.
-Our framework combines probabilistic moment estimation, learned consistency signals, and mechanism-specific checks, then maps causal, validation-normalized evidence to a nonnegative torque gain.
-Participant-disjoint offline replay covers in-distribution and training-held-out tasks, six training-time faults, and three held-out operators within the packet-loss and delay families.
-Relative to a split-matched deterministic TCN, reliability training increases clean RMSE by $0.011$ Nm/kg in-distribution and $0.021$ Nm/kg on training-held-out tasks.
-Across nine faults and both task splits, gating reduces the opposition-weighted torque-product integral by $0.0114$ $(\mathrm{Nm/kg})^2\mathrm{s}$, or $0.0070\pm0.0015$ after subtracting the matched clean-condition effect, while retaining $96.1\%$ of the ungated estimator's clean aligned command.
-The mechanically non-increasing wrong-direction fraction falls by $0.74$ percentage points only at exact shutdowns; across fifteen leave-one-subject-out folds its reduction averages $0.44$ percentage points (descriptive $95\%$ bootstrap interval $[0.23,0.67]$).
-Mean absolute torque rate nevertheless rises by $18\%$--$28\%$ on training-held-out faulty trials.
-An audit excludes a configuration-mismatched reselection pass; post-hoc timing controls and sub-window transients around the archived operating point remain weak.
-The evidence therefore supports a modest offline attenuation effect, not an online safety claim, and motivates reporting discrimination, magnitude-sensitive consequences, retention, smoothness, and matched controls together.
+Powered lower-limb exoskeletons must decide how much to assist as the wearer moves freely; task-agnostic controllers do so by mapping wearable-sensor histories to biological joint moments. Because that mapping is continuous and uses no task label, a sensor fault propagates into commanded torque even when nominal error is low. Clean accuracy cannot expose such isolated events, predictive uncertainty alone need not flag a held but locally plausible value, and detecting an anomaly still does not say what the actuator should do. We formulate deployment reliability as a validation-calibrated risk--utility decision: a causal monitor fuses probabilistic moment estimation, learned consistency signals, and mechanism-specific integrity checks into a continuous torque gain, with normalization, detector selection, and gate tuning fixed on validation data alone. Under participant-disjoint replay over in-distribution and held-out tasks, six training-time faults, and three fault generators withheld from training and detector selection, reliability training costs $0.011$ and $0.021$ Nm/kg in clean RMSE; gating then cuts opposition-weighted wrong-direction torque exposure by $0.0070\pm0.0015$ $(\mathrm{Nm/kg})^2\mathrm{s}$ beyond the matched clean effect and wrong-direction timesteps by $0.74$ percentage points, keeping $96.1\%$ of the ungated clean aligned command. Torque rate nevertheless rises by $18\%$--$28\%$, retention-matched random attenuation is indistinguishable in $32$ of $60$ cells, and sub-window faults are mostly missed. The benefit is thus one of attenuation magnitude at a conservative offline operating point, not of selective timing or online safety. Deployment reliability must therefore be judged jointly through fault discrimination, control consequences, retained utility, and matched controls, which no single metric separates.
 \end{abstract}
 
-\section{Introduction}
-Powered lower-limb exoskeletons can reduce locomotor effort and support people with gait impairments, but controllers must decide what assistance is appropriate as the user moves among activities \citep{young2017state,kim2019exosuit,awad2017soft,siviy2023opportunities}.
-Mode-based controllers decide from a fixed task set \citep{camargo2021classification,kang2022classification}, which scales poorly to transitions and unstructured motion; task-agnostic control instead estimates biological hip and knee moments from wearable sensors and uses this continuous physiological state to assist cyclic, transient, and unstructured movements \citep{molinaro2022hip,molinaro2024unifies,molinaro2024task}.
 
-Wider task coverage, however, does not ensure that every deployed prediction is reliable.
+\section{Introduction}
+Powered lower-limb exoskeletons can reduce locomotor effort and support impaired gait, but controllers must decide what assistance is appropriate as the user moves among activities \citep{young2017state,kim2019exosuit,awad2017soft,siviy2023opportunities}.
+Mode-based controllers decide from a fixed task set \citep{camargo2021classification,kang2022classification}, which scales poorly to transitions and unstructured motion; task-agnostic control instead estimates biological hip and knee moments from wearable sensors and uses that continuous state to assist cyclic, transient, and unstructured movements \citep{molinaro2022hip,molinaro2024unifies,molinaro2024task}.
+
+
+% 单栏浮动体，不是 figure*：双栏浮动体不会排到有标题块的第一页顶部，会被推到第 2 页，
+% 而这张图的唯一作用是第一页吸睛。单栏版放在第 1 页右栏顶部。
+% 位置也不能放在 \end{abstract} 之后：那样 \output 在处理标题块所在的那栏时会溢出
+% 36 pt（main.log 里那条 Overfull \vbox），排到 Introduction 第一段之后才干净。
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{figures/fig_teaser.pdf}
+\caption{Reliability evidence is only useful if it changes the command. (a) A measured replay window (seed 7, in-distribution task, \texttt{encoder\_dropout}, held-out participant): where the ungated command opposes the biological moment, the gate removes $84\%$ of that exposure. Aligned-command retention here is $0.66$, below the $96.1\%$ clean average, so this window is conservative rather than favourable. (b) Protocol-level results over nine operators, two splits, and three seeds; the torque-rate row is the cost paid.}
+\label{fig:teaser}
+\end{figure}
+
+Wider task coverage does not ensure that every deployed prediction is reliable.
 Frozen streams, drift, burst packet loss, or asynchronous modalities can corrupt an otherwise familiar trial, and because predicted moments feed the torque pipeline, such errors may remove useful assistance or reverse its direction.
 Clean RMSE cannot reveal these isolated events, predictive uncertainty alone need not detect a held but locally plausible value or slow drift \citep{ovadia2019trust}, and detecting an anomaly still does not specify what the actuator should do.
-The question is therefore whether such an estimator can detect several forms of sensor failure and respond without unnecessarily suppressing valid assistance.
+The question is whether such an estimator can detect several forms of sensor failure and respond without suppressing valid assistance.
 
-We address it with a causal multi-head TCN trained on synthetic faults, predicting joint moments, data-dependent uncertainty, fault probability, clean-input reconstruction, and short-horizon sensor values. A separate monitor combines these outputs with causal integrity checks, selects evaluation subsets without test data, and maps normalized timestep evidence to a continuous torque gate. We contribute a split-explicit fault-transfer protocol, a validation-frozen causal gate evaluated with magnitude-sensitive control metrics, and an audit suite of matched controls, transients, paired contrasts, and component ablations.
+We address it with a causal multi-head TCN trained on synthetic faults, predicting joint moments, data-dependent uncertainty, fault probability, clean-input reconstruction, and short-horizon sensor values, and a separate monitor that fuses these with causal integrity checks into a continuous torque gate. Our contributions are:
+
+% 贡献点分条列出。itemize 的默认 \topsep/\itemsep/\partopsep 在这里必须全部收紧，正文已在
+% 7 页上限：默认间距加上换行会多占十余行，把参考文献从第 8 页首行推走。每条压到一行以内。
+\begin{itemize}
+\setlength{\itemsep}{0pt}
+\setlength{\parskip}{0pt}
+\setlength{\partopsep}{0pt}
+\setlength{\topsep}{1pt}
+\item a split-explicit protocol separating held-out tasks from held-out fault generators;
+\item a validation-frozen causal gate judged by magnitude-sensitive control metrics;
+\item an audit suite of matched randomized controls, transients, paired contrasts, and ablations bounding what the effect supports.
+\end{itemize}
 
 \section{Related Work}
 
 \paragraph{Task-agnostic exoskeleton control.}
 Conventional controllers infer a discrete locomotion mode or gait phase before applying a task-specific torque policy \citep{camargo2021classification,kang2022classification}.
-Moment-based control instead uses an instantaneous biological joint-moment estimate as a continuous control state, first for subject-independent hip assistance \citep{shepherd2022deep,molinaro2022hip}, then as a representation shared across ambulatory conditions \citep{molinaro2024unifies}, and finally for coordinated hip and knee assistance without task classification \citep{molinaro2024task}, whose sensing configuration, prediction target, and control transformation we adopt. Those studies evaluate accuracy under nominal operation; their sensor ablations measure sensitivity to removing a modality but do not estimate sensor health, calibrate deployment risk, or change assistance when a fault is detected.
+Moment-based control instead uses an instantaneous biological joint-moment estimate as a continuous control state, first for subject-independent hip assistance \citep{shepherd2022deep,molinaro2022hip}, then across ambulatory conditions \citep{molinaro2024unifies}, and finally for coordinated hip and knee assistance without task classification \citep{molinaro2024task}, whose sensing, target, and control transformation we adopt. Those studies evaluate nominal accuracy; their sensor ablations measure sensitivity to removing a modality but do not estimate sensor health or change assistance when a fault is detected.
 
 \paragraph{Data efficiency and domain shift.}
-Because moment labels need motion-capture and force-plate measurement and are device-specific, \citet{scherpereel2025domain} translate open-source biomechanics data into a target sensor domain by CycleGAN; personalization \citep{zhang2017humanloop,slade2022personalizing} and simulation-trained policies \citep{luo2024simulation} likewise act before deployment. All change how the estimator or its assistance profile is obtained; we address corrupted observations encountered afterwards on the target device.
+Because moment labels need motion-capture and force-plate measurement and are device-specific, \citet{scherpereel2025domain} translate open-source biomechanics data into a target sensor domain by CycleGAN; personalization \citep{zhang2017humanloop,slade2022personalizing} and simulation-trained policies \citep{luo2024simulation} likewise act before deployment. All change how the estimator is obtained; we address corrupted observations met afterwards on-device.
 
 \paragraph{Uncertainty, anomalies, and selective prediction.}
-Heteroscedastic regression separates input-dependent observation noise from the predicted mean \citep{kendall2017uncertainties}, while MC dropout and deep ensembles approximate epistemic uncertainty \citep{gal2016dropout,lakshminarayanan2017ensembles}, though both may become miscalibrated under shift \citep{ovadia2019trust}.
-Uncertainty-aware ankle assistance disengages on OOD estimates, targeting behavioral novelty rather than structured sensor faults \citep{tourk2025uncertainty}. In multivariate time series, reconstruction error and changes in inter-variable relationships supply evidence that predictive variance misses \citep{song2023memto,dai2024sarad}, motivating mechanism-specific channels.
-Selective prediction abstains when expected error is high \citep{geifman2019selectivenet}; an assistive controller cannot abstain without saying what the actuator should do, so we convert validation-normalized anomaly evidence into a continuous gain and evaluate the resulting command trade-offs.
+Heteroscedastic regression separates input-dependent noise from the predicted mean \citep{kendall2017uncertainties}, while MC dropout and deep ensembles approximate epistemic uncertainty \citep{gal2016dropout,lakshminarayanan2017ensembles}, though both may become miscalibrated under shift \citep{ovadia2019trust}.
+Uncertainty-aware ankle assistance disengages on OOD estimates, targeting behavioral novelty rather than structured sensor faults \citep{tourk2025uncertainty}. In multivariate time series, reconstruction error and changes in inter-variable relationships supply evidence that predictive variance misses \citep{song2023memto,dai2024sarad}, motivating mechanism-specific channels. Selective prediction abstains when expected error is high \citep{geifman2019selectivenet}; an assistive controller cannot abstain without saying what the actuator should do, so we map validation-normalized evidence to a continuous gain and evaluate the command trade-offs.
 
 \paragraph{Fault-tolerant exoskeleton control.}
-Prior exoskeleton studies inject freeze, stuck-at-zero, and bit-flip faults into dynamic models to identify critical exposure durations \citep{fabarisov2020fault}, or use model-based observers to reconstruct sensor and actuator faults before trajectory tracking \citep{mokhtari2022fault,sun2025reconstruction}, exploiting an explicit plant model for rehabilitation trajectory control.
-We instead monitor a learned, task-agnostic moment estimator from heterogeneous wearable observations; it detects but does not reconstruct faults, so its offline replay complements rather than replaces plant-level fault isolation and certified hardware limits.
+Prior exoskeleton studies inject freeze, stuck-at-zero, and bit-flip faults into dynamic models to find critical exposure durations \citep{fabarisov2020fault}, or use model-based observers to reconstruct sensor and actuator faults before trajectory tracking \citep{mokhtari2022fault,sun2025reconstruction}, exploiting an explicit plant model. We instead monitor a learned, task-agnostic moment estimator from heterogeneous wearable observations; it detects but does not reconstruct faults, so its offline replay complements rather than replaces plant-level fault isolation and certified hardware limits.
 
 \section{Problem Formulation}
 
 Let $\mathbf{x}_{1:T}\in\mathbb{R}^{C\times T}$ denote a causal input window of unilateral measurements from the foot, shank, and thigh IMUs, the insole, and the hip and knee encoders, and let the target $\mathbf{y}_{t}\in\mathbb{R}^{2}$ hold mass-normalized biological hip and knee moments.
-During deployment, an unknown corruption $f\in\mathcal{F}$ may transform the observations and produce $\widetilde{\mathbf{x}}_{1:T}$.
+At deployment an unknown corruption $f\in\mathcal{F}$ may transform the observations into $\widetilde{\mathbf{x}}_{1:T}$.
 We seek a predictor $\widehat{\mathbf{y}}_t$ and a reliability gate $g_t\in[0,1]$ such that the commanded torque
 \begin{equation}
     \boldsymbol{\tau}^{\mathrm{cmd}}_t
     = g_t\,\mathcal{C}(\widehat{\mathbf{y}}_{1:t})
 \end{equation}
-preserves useful assistance for clean inputs while suppressing harmful commands under task shifts or sensor faults, where $\mathcal{C}$ is the baseline pipeline for moment-to-torque scaling, delay, filtering, and saturation.
-Evaluation must cover moment fidelity, fault discrimination, command attenuation, retained baseline assistance, and smoothness; none of these criteria suffices alone.
+preserves useful assistance for clean inputs while suppressing harmful commands under task shift or sensor faults, where $\mathcal{C}$ is the baseline pipeline for moment-to-torque scaling, delay, filtering, and saturation.
+Evaluation must cover moment fidelity, fault discrimination, command attenuation, retained assistance, and smoothness; no one criterion suffices.
 
 \section{Method}
 
-Figure~\ref{fig:overview} summarizes the three parts: the corrupted input stream, the shared causal estimator with its reliability heads and integrity checks, and the validation-selected mapping from normalized anomaly evidence to a torque gate.
+Figure~\ref{fig:overview} summarizes the corrupted input stream and the shared causal estimator with its reliability heads and integrity checks; Figure~\ref{fig:teaser}(a) shows the resulting gate acting on a measured window.
 
 \begin{figure*}[t]
 \centering
-\includegraphics[width=0.9\textwidth]{figures/fig_method_overview.pdf}
-\caption{Method overview. (a) Causal wearable input streams and synthetic faults; traces are illustrative, with a held-value interval shaded. (b) A shared causal TCN predicts hip--knee moments and anomaly evidence, while integrity checks target specific mechanisms. (c) Measured per-timestep export (seed 7, in-distribution test window, \texttt{encoder\_dropout}): the gate attenuates the command whenever the normalized score exceeds the deadband.}
+\includegraphics[width=\textwidth]{figures/fig_method_overview.pdf}
+\caption{Method overview. (a) Causal wearable input streams and synthetic faults; traces are illustrative, with a held-value interval shaded. (b) A shared causal TCN predicts hip--knee moments and anomaly evidence, while integrity checks target specific mechanisms.}
 \label{fig:overview}
 \end{figure*}
 
@@ -99,16 +115,15 @@ Figure~\ref{fig:overview} summarizes the three parts: the corrupted input stream
 
 Training-participant channel means $\mathbf{c}$ and standard deviations $\mathbf{v}\in\mathbb{R}^{C}$ normalize each observation as $\mathbf{z}_t=(\mathbf{x}_t-\mathbf{c})\oslash\max(\mathbf{v},10^{-6})$, with $\oslash$ elementwise division.
 Following \citet{molinaro2024task} and \citet{bai2018tcn}, the shared encoder has $L=5$ residual blocks, each with two causal convolutions of kernel size $k=5$ and dilation $2^{\ell-1}$, weight normalization, ReLU, and dropout.
-The receptive field is $H=1+2(k-1)\sum_{\ell=1}^{L}2^{\ell-1}=249$ samples, and the first $H-1$ window outputs are excluded from training and evaluation.
-
+The receptive field is $H=1+2(k-1)\sum_{\ell=1}^{L}2^{\ell-1}=249$ samples; the first $H-1$ window outputs are excluded from training and evaluation.
 Five $1\!\times\!1$ heads produce the moment mean $\boldsymbol{\mu}_t$, log variance $\mathbf{s}_t$ (clamped to $[-8,5]$), binary fault logit $a_t$, clean-input reconstruction $\widehat{\mathbf{z}}_t$, and $h$-step forecast $\overline{\mathbf{z}}_{t+h\mid t}$, giving the diagonal predictive distribution $p(\mathbf{y}_t\mid\widetilde{\mathbf{x}}_{1:t})=\mathcal{N}(\boldsymbol{\mu}_t,\operatorname{diag}(\exp\mathbf{s}_t))$.
 
 \subsection{Fault-Augmented Multi-Task Learning}
 
-For each training window, we sample clean data or one of six faults through an operator $\widetilde{\mathbf{x}}=\mathcal{A}_f(\mathbf{x};\boldsymbol{\xi})$ at fixed severity and target group: the insole or encoder group is zeroed; the shank IMU takes a bias ramp of $0.25$ channel standard deviations; packet loss holds each sample independently with probability $0.15$ across all groups; the foot IMU freezes; or sensor delay shifts every group by $10$ samples ($50$~ms), scaled by $1.0$, $1.6$, $0.6$, $2.0$, and $1.2$ for foot, shank, thigh, insole, and encoder, so modalities become mutually asynchronous rather than uniformly late.
+For each training window we sample clean data or one of six faults through an operator $\widetilde{\mathbf{x}}=\mathcal{A}_f(\mathbf{x};\boldsymbol{\xi})$ at fixed severity and target group: the insole or encoder group is zeroed; the shank IMU takes a bias ramp of $0.25$ channel standard deviations; packet loss holds each sample independently with probability $0.15$ across all groups; the foot IMU freezes; or sensor delay shifts every group by $10$ samples ($50$~ms), scaled by $1.0$, $1.6$, $0.6$, $2.0$, and $1.2$ for foot, shank, thigh, insole, and encoder, so modalities become mutually asynchronous rather than uniformly late.
 Each fault occupies its whole window, so the fault label $b_f$ below is window-constant.
 The three held-out operators reuse known fault families at the same nominal rates: burst loss forward-fills runs of length $\max(2,\operatorname{round}(2+24p))$ with per-timestep start probability $p$ divided by that length, partial loss draws an independent channel--time mask, and delay jitter redraws each modality's shift per window in $[0.5,1.5]$ times nominal.
-They test operator transfer within known packet-loss and delay semantics, not open-set hardware-fault generalization; the supplement lists every protocol role.
+They test operator transfer within known packet-loss and delay semantics, not open-set generalization; the supplement lists every protocol role.
 
 With $m_{jt}$ indicating a valid moment label and $b_f=\mathbb{I}[f\neq\mathrm{clean}]$, the masked heteroscedastic loss is
 \begin{equation}
@@ -116,18 +131,18 @@ With $m_{jt}$ indicating a valid moment label and $b_f=\mathbb{I}[f\neq\mathrm{c
 =\frac{\sum_{j,t}m_{jt}\left[s_{jt}+(y_{jt}-\mu_{jt})^2\exp(-s_{jt})\right]}{2\sum_{j,t}m_{jt}}.
 \end{equation}
 The moment head receives $\widetilde{\mathbf{x}}$ with the clean target $\mathbf{y}$, encouraging robustness when a fault leaves enough information, and the fault head uses timestepwise binary cross-entropy $\mathcal{L}_{\mathrm{fault}}$ between $b_f$ and $\sigma(a_t)$, averaged over the set $\Omega$ of timesteps with at least one valid joint label.
-The auxiliary heads recover the uncorrupted normalized sequence instead of reproducing the corrupted input, as $\mathcal{L}_{\mathrm{rec}}=\operatorname{MSE}_{\Omega}(\widehat{\mathbf{z}}_t(\widetilde{\mathbf{x}}),\mathbf{z}_t(\mathbf{x}))$ and $\mathcal{L}_{\mathrm{pred}}=\operatorname{MSE}_{\Omega}(\overline{\mathbf{z}}_{t+h\mid t}(\widetilde{\mathbf{x}}_{1:t}),\mathbf{z}_{t+h}(\mathbf{x}))$.
-The complete objective is $\mathcal{L}=\mathcal{L}_{\mathrm{mom}}+\lambda_f\mathcal{L}_{\mathrm{fault}}+\lambda_r\mathcal{L}_{\mathrm{rec}}+\lambda_p\mathcal{L}_{\mathrm{pred}}$ with $(\lambda_f,\lambda_r,\lambda_p)=(0.2,0.1,0.1)$.
-Reconstruction updates the shared encoder, whereas forecasting stops gradients at $\mathbf{h}_t$ so that it acts as a temporal probe.
+The auxiliary heads recover the uncorrupted normalized sequence rather than the corrupted input, as $\mathcal{L}_{\mathrm{rec}}=\operatorname{MSE}_{\Omega}(\widehat{\mathbf{z}}_t(\widetilde{\mathbf{x}}),\mathbf{z}_t(\mathbf{x}))$ and $\mathcal{L}_{\mathrm{pred}}=\operatorname{MSE}_{\Omega}(\overline{\mathbf{z}}_{t+h\mid t}(\widetilde{\mathbf{x}}_{1:t}),\mathbf{z}_{t+h}(\mathbf{x}))$.
+The objective is $\mathcal{L}=\mathcal{L}_{\mathrm{mom}}+\lambda_f\mathcal{L}_{\mathrm{fault}}+\lambda_r\mathcal{L}_{\mathrm{rec}}+\lambda_p\mathcal{L}_{\mathrm{pred}}$ with $(\lambda_f,\lambda_r,\lambda_p)=(0.2,0.1,0.1)$.
+Reconstruction updates the shared encoder, whereas forecasting stops gradients at $\mathbf{h}_t$ so it acts as a temporal probe.
 
 \subsection{Complementary Integrity Signals}
 
-Different faults affect different signal properties, so the monitor considers eight candidates. The learned ones are fault probability $q_t^{\mathrm{fault}}=\sigma(a_t)$, mean aleatoric scale $q_t^{\mathrm{ale}}=\frac{1}{2}\sum_j\exp(s_{jt}/2)$, reconstruction and forecast residuals, and optional epistemic scale.
+Different faults affect different signal properties, so the monitor considers eight candidates. The learned ones are fault probability $q_t^{\mathrm{fault}}=\sigma(a_t)$, mean aleatoric scale $q_t^{\mathrm{ale}}=\frac{1}{2}\sum_j\exp(s_{jt}/2)$, reconstruction and forecast residuals, and an optional epistemic scale.
 Over modality groups $G$, the residual scores are $q_t^{\mathrm{rec}}=\max_G|G|^{-1}\sum_{c\in G}(\widehat z_{ct}-\widetilde z_{ct})^2$ and $q_{t+h}^{\mathrm{pred}}=\max_G|G|^{-1}\sum_{c\in G}(\overline z_{c,t+h\mid t}-\widetilde z_{c,t+h})^2$.
-A forecast made at $t$ is scored only when its target arrives at $t+h$, so the score at $u$ compares $\overline{\mathbf{z}}_{u\mid u-h}$ with $\widetilde{\mathbf{z}}_u$ and the channel is zero for the first $h$ samples, preserving command-time causality. Epistemic scale is the joint-averaged standard deviation across stochastic-dropout passes or ensemble members.
+A forecast made at $t$ is scored only when its target arrives at $t+h$, so the score at $u$ compares $\overline{\mathbf{z}}_{u\mid u-h}$ with $\widetilde{\mathbf{z}}_u$ and the channel is zero for the first $h$ samples, preserving command-time causality. Epistemic scale is the joint-averaged standard deviation across dropout passes or ensemble members.
 
-Three integrity statistics cover signatures that learned heads may miss. Staleness is the moving fraction of nearly unchanged channels and coherence is one minus the mean absolute rolling correlation between differenced, corresponding IMU axes; both use trailing windows, so their value at $t$ needs no future sample. Drift is the largest modality-averaged channel slope, fitted over the whole window and therefore the only noncausal, window-level channel.
-The evaluated gate consumes staleness but not coherence or drift, so both are diagnostic channels: for drift this is forced by its definition, for coherence it is an implementation choice whose cost the severity analysis quantifies. Of the two, only coherence is ever selected.
+Three integrity statistics cover signatures the learned heads may miss. Staleness is the moving fraction of nearly unchanged channels and coherence is one minus the mean absolute rolling correlation between differenced, corresponding IMU axes; both use trailing windows, so their value at $t$ needs no future sample. Drift is the largest modality-averaged channel slope, fitted over the whole window and therefore the only noncausal, window-level channel.
+The evaluated gate consumes staleness but not coherence or drift, so both are diagnostic: for drift this is forced by its definition, for coherence it is an implementation choice whose cost the severity analysis quantifies. Of the two, only coherence is ever selected.
 
 \subsection{Validation-Normalized Fault Evidence}
 
@@ -140,36 +155,35 @@ Using five validation faults (insole missing, encoder dropout, IMU bias, packet 
 where the second term rewards the hardest fault and the last favors smaller subsets.
 Both $S$ and $\rho_k^{\mathrm{det}}$ are frozen before test evaluation, and burst loss, partial-channel loss, and delay jitter are excluded from training and detector selection alike.
 
-Coherence and drift sit outside the evaluated gate, so one fused number would overstate what is available to deployment.
-We run the same subset search twice on the same validation scores: \emph{Detector-all} searches all eight candidates as an offline diagnostic reference, while \emph{Detector-gate} restricts the pool to the channels actually implemented in $\mathcal{K}_{\mathrm{gate}}$ below.
-These subsets are used only for window-level AUROC evaluation.
-The gate does not reuse the selected detector subset: it fuses all available members of $\mathcal{K}_{\mathrm{gate}}$ and tunes the actuation mapping separately.
+Coherence and drift sit outside the evaluated gate, so one fused number would overstate what deployment has available.
+We run the same subset search twice on the same validation scores: \emph{Detector-all} searches all eight candidates as an offline diagnostic reference, while \emph{Detector-gate} restricts the pool to the channels implemented in $\mathcal{K}_{\mathrm{gate}}$ below. These subsets serve only window-level AUROC evaluation.
+The gate does not reuse the selected subset: it fuses all available members of $\mathcal{K}_{\mathrm{gate}}$ and tunes the actuation mapping separately.
 
 \subsection{Validation-Selected Assistance Gate}
 
 The command-time anomaly score uses the causal timestep-level channels
 $\mathcal{K}_{\mathrm{gate}}=\{\mathrm{fault},\mathrm{ale},\mathrm{rec},\mathrm{pred},\mathrm{epi},\mathrm{stale}\}$ that are available in a given configuration, fused as $r_t=\max_{k\in\mathcal{K}_{\mathrm{gate}}}q_t^k/\max(\rho_k^{\mathrm{gate}},10^{-6})$.
-We share the detector scale, $\rho_k^{\mathrm{gate}}:=\rho_k^{\mathrm{det}}$, to place window- and timestep-level scores on the same numerical scale; it is a quantile of window means, not a timestep quantile or a calibrated posterior probability. Clean training-held-out-task validation trials and designated validation faults select the deadband $d$ and softness $\gamma$.
+We share the detector scale, $\rho_k^{\mathrm{gate}}:=\rho_k^{\mathrm{det}}$, to place window- and timestep-level scores on one numerical scale; it is a quantile of window means, not a timestep quantile or a calibrated posterior. Clean held-out-task validation trials and designated validation faults select the deadband $d$ and softness $\gamma$.
 
-The score is converted into a raw continuous gain $\widetilde g_t=\operatorname{clip}_{[0,1]}(1-[r_t-(1+d)]/\gamma)$, so $\widetilde g_t=1$ within the nominal region $r_t\leq1+d$ and decreases linearly beyond it.
-The deadband is $d=\min(2,\max[0.1,\operatorname{Quantile}_{0.9}(r^{\mathrm{val\text{-}held}})-1])$ on clean training-held-out-task trials from validation participants, and we search $\gamma\in\{0.25,0.5,1,2,4,8\}$.
-The archived evaluation required at least 95\% clean aligned-command retention and recorded non-increase checks on the clean wrong-direction fraction and four validation faults (insole missing, encoder dropout, packet loss, and sensor delay); candidates were ranked by $\kappa_{\mathrm{clean}}+2\bar\delta+0.25\bar\kappa$, with $\kappa_{\mathrm{clean}}$ the gated-over-ungated clean retention and $\bar\delta,\bar\kappa$ the mean relative wrong-direction reduction and retention ratio over validation faults.
-This exactly describes the archived operating point, but its non-increase checks are not substantive constraints: because $g_t\geq0$, the gate cannot create a sign reversal, so the only active feasibility condition is clean retention and $\bar\delta$ merely ranks hard closures.
-We therefore reselect the operating point on validation data using $X_{\mathrm{opp}}$ as the objective under six explicit clean-side constraints---aligned-command and capped-overlap retention, tracking RMSE, full-shutdown fraction, mean absolute torque rate, and false shutdowns per minute---searching $\gamma$ jointly with the causal rate limits $(\lambda^{\downarrow},\lambda^{\uparrow})$ over $216$ candidates per seed.
-Unlike wrong-direction non-increase, none of these six constraints is guaranteed by nonnegative gating.
-The rate limiter is causal: starting from $\widetilde g_t$, it applies the lower bound $g_{t-1}-\lambda^{\downarrow}$ and upper bound $g_{t-1}+\lambda^{\uparrow}$ only when the corresponding limit is positive; a grid value of zero leaves that direction unrestricted. It therefore neither anticipates onsets nor changes what the gate is allowed to see.
+The score becomes a raw gain $\widetilde g_t=\operatorname{clip}_{[0,1]}(1-[r_t-(1+d)]/\gamma)$, so $\widetilde g_t=1$ within the nominal region $r_t\leq1+d$ and decreases linearly beyond it.
+The deadband is $d=\min(2,\max[0.1,\operatorname{Quantile}_{0.9}(r^{\mathrm{val\text{-}held}})-1])$ on clean held-out-task trials from validation participants, and we search $\gamma\in\{0.25,0.5,1,2,4,8\}$.
+The archived evaluation required at least 95\% clean aligned-command retention and recorded non-increase checks on the clean wrong-direction fraction and four validation faults; candidates were ranked by $\kappa_{\mathrm{clean}}+2\bar\delta+0.25\bar\kappa$, with $\kappa_{\mathrm{clean}}$ the gated-over-ungated clean retention and $\bar\delta,\bar\kappa$ the mean relative wrong-direction reduction and retention ratio over validation faults.
+That describes the archived point, but its non-increase checks are not substantive constraints: because $g_t\geq0$ the gate cannot create a sign reversal, so the only active feasibility condition is clean retention and $\bar\delta$ merely ranks hard closures.
+We therefore reselect on validation data, maximizing a score whose primary safety term is the relative $X_{\mathrm{opp}}$ reduction over validation faults, under six clean-side constraints---aligned-command and capped-overlap retention, tracking RMSE, full-shutdown fraction, mean absolute torque rate, and false shutdowns per minute---searching $\gamma$ jointly with the causal rate limits $(\lambda^{\downarrow},\lambda^{\uparrow})$ over $216$ candidates per seed. The supplement gives the exact score and levels.
+Unlike wrong-direction non-increase, none of these six is guaranteed by nonnegative gating.
+The rate limiter is causal: from $\widetilde g_t$ it applies the bounds $g_{t-1}-\lambda^{\downarrow}$ and $g_{t-1}+\lambda^{\uparrow}$ only when the corresponding limit is positive; a grid value of zero leaves that direction unrestricted. It neither anticipates onsets nor changes what the gate sees.
 The baseline transformation $\mathcal{C}$ scales the estimated hip and knee moments by $0.20$ and $0.15$, applies the configured joint delays and a 6-Hz low-pass filter, and clips torque to $0.45$ Nm/kg; the gated command $\boldsymbol{\tau}^{\mathrm{cmd}}_t=g_t\mathcal{C}(\boldsymbol{\mu}_{1:t})$ attenuates unreliable estimates but does not replace independent actuator saturation or hardware limits.
 
 \section{Experimental Protocol}
 \subsection{Data, Splits, and Comparisons}
 
 We use the released exoskeleton sensor and biological-moment data underlying the task-agnostic controller \citep{molinaro2024task,scherpereel2023dataset}, resampled to a uniform $200$~Hz, so one sample is $5$~ms and the forecast horizon $h=1$ is one control step.
-Inputs comprise $25$ unilateral channels in five modality groups $G$: foot, shank, and thigh IMU ($6$ channels each, three gyroscope and three accelerometer axes), insole ($3$), and hip--knee encoders ($4$), with the action profiles of the input ablation adding a sixth group; targets are right hip and knee moments in Nm/kg.
-Of the $15$ participants, $11$ train, $2$ validate, and $2$ test. Jumping, cutting, weight lifting, and lunges are excluded from estimator fitting and form the training-held-out task set, written HT below against ID for in-distribution tasks; clean trials from these categories tune the gate on validation participants only, so they are not unseen to the complete pipeline. No test participant informs preprocessing, score normalization, detector selection, or gate tuning. The leave-one-subject-out analysis rotates over all $15$, each fold taking the preceding participant as validation; the primary baseline is a deterministic, non-augmented TCN on the same split, and ablations add fault augmentation, probabilistic regression, reconstruction, and forecasting in order.
+Inputs comprise $25$ unilateral channels in five modality groups $G$: foot, shank, and thigh IMU ($6$ each, three gyroscope and three accelerometer axes), insole ($3$), and hip--knee encoders ($4$), with the action profiles of the input ablation adding a sixth group; targets are right hip and knee moments in Nm/kg.
+Of the $15$ participants, $11$ train, $2$ validate, and $2$ test. Jumping, cutting, weight lifting, and lunges are excluded from estimator fitting and form the training-held-out task set, written HT below against ID for in-distribution tasks; clean trials from these categories tune the gate on validation participants only, so they are not unseen to the full pipeline. No test participant informs preprocessing, score normalization, detector selection, or gate tuning. The leave-one-subject-out analysis rotates over all $15$, each fold taking the preceding participant as validation; the baseline is a deterministic, non-augmented TCN on the same split, and ablations add fault augmentation, probabilistic regression, reconstruction, and forecasting in order.
 
 \subsection{Metrics and Implementation}
 
-We report RMSE, MAE, $R^2$, Gaussian NLL, uncertainty--error correlation, interval coverage and calibration error, and per-channel and fused fault AUROC. Control-replay metrics are defined against the ideal command $\boldsymbol{\tau}^{\star}=\mathcal{C}(\mathbf{y})$, the \emph{true} moment through the same transformation $\mathcal{C}$.
+We report RMSE, MAE, $R^2$, Gaussian NLL, uncertainty--error correlation, interval coverage and calibration error, and per-channel and fused fault AUROC. Control-replay metrics are defined against the ideal command $\boldsymbol{\tau}^{\star}=\mathcal{C}(\mathbf{y})$, the \emph{true} moment through the same $\mathcal{C}$.
 A joint-timestep pair $n$ is \emph{active} when both joint labels at its timestep are valid and $|\tau^{\star}_n|>0.02$ Nm/kg; the set $\mathcal{A}$ depends only on the true moment, so it is identical for gated and ungated commands and cannot be shrunk by attenuation.
 Writing $u_n=\tau^{\mathrm{cmd}}_n$, our primary command-consequence metric is the opposition-weighted torque-product integral
 \begin{equation}
@@ -177,14 +191,14 @@ X_{\mathrm{opp}}(u)=\textstyle\sum_{n\in\mathcal{A}}
 \max(0,-u_n\tau^{\star}_n)\,\Delta t,\quad \Delta t=1/200\ {\rm s},
 \end{equation}
 in $(\mathrm{Nm/kg})^2\mathrm{s}$; because no angular velocity appears it is an exposure surrogate, not mechanical energy.
-We additionally report the wrong-direction fraction
-$w(u)=|\mathcal{A}|^{-1}\sum_{n\in\mathcal{A}}\mathbb{I}[u_n\tau_n^\star<0]$, peak $|u_n|$ over those pairs, mean absolute torque rate $|\Delta u|/\Delta t$ in Nm\,kg$^{-1}$\,s$^{-1}$, and command retention $\kappa=\sum_{\mathcal{A}}\max(0,u_n^{\mathrm{gated}}\operatorname{sgn}\tau_n^\star)/\sum_{\mathcal{A}}\max(0,u_n^{\mathrm{ungated}}\operatorname{sgn}\tau_n^\star)$, a weighted fraction of the baseline's same-direction command rather than a tracking measure.
+We also report the wrong-direction fraction
+$w(u)=|\mathcal{A}|^{-1}\sum_{n\in\mathcal{A}}\mathbb{I}[u_n\tau_n^\star<0]$, peak $|u_n|$ over those pairs, mean absolute torque rate $|\Delta u|/\Delta t$ in Nm\,kg$^{-1}$\,s$^{-1}$, and command retention $\kappa=\sum_{\mathcal{A}}\max(0,u_n^{\mathrm{gated}}\operatorname{sgn}\tau_n^\star)/\sum_{\mathcal{A}}\max(0,u_n^{\mathrm{ungated}}\operatorname{sgn}\tau_n^\star)$, a weighted fraction of the baseline's same-direction command, not a tracking measure.
 For the clean-side constraint, capped-overlap adequacy replaces each same-direction magnitude by $\min(|u_n|,|\tau_n^\star|)$ and normalizes by $\sum_{\mathcal A}|\tau_n^\star|$; capped-overlap retention is its gated-over-ungated ratio, so over-assistance is not rewarded.
-Since $u_n^{\mathrm{gated}}=g_nu_n^{\mathrm{ungated}}$ with $g_n\geq0$, the wrong-direction indicator factorizes into $\mathbb{I}[u_n^{\mathrm{ungated}}\tau_n^\star<0]\,\mathbb{I}[g_n>0]$, so $w(u^{\mathrm{gated}})\leq w(u^{\mathrm{ungated}})$ and $w$ responds only to exact shutdowns ($g_n=0$). Likewise, $X_{\mathrm{opp}}(gu)\leq X_{\mathrm{opp}}(u)$, but it responds continuously to every attenuation $0\leq g_n<1$; retention and matched controls are therefore necessary to distinguish selective timing from generic suppression.
-A first-order actuator proxy also estimates net-moment RMS and work-related quantities, as relative offline comparisons rather than metabolic outcomes.
+Since $u_n^{\mathrm{gated}}=g_nu_n^{\mathrm{ungated}}$ with $g_n\geq0$, the wrong-direction indicator factorizes into $\mathbb{I}[u_n^{\mathrm{ungated}}\tau_n^\star<0]\,\mathbb{I}[g_n>0]$, so $w(u^{\mathrm{gated}})\leq w(u^{\mathrm{ungated}})$ and $w$ responds only to exact shutdowns ($g_n=0$). Likewise $X_{\mathrm{opp}}(gu)\leq X_{\mathrm{opp}}(u)$, but it responds continuously to every attenuation $0\leq g_n<1$; retention and matched controls are thus needed to separate selective timing from blanket suppression.
+A first-order actuator proxy also estimates net-moment RMS and work-related quantities, as relative offline comparisons only.
 The model has five 80-channel TCN blocks, kernel size 5, dropout 0.15, and 768-sample windows at stride 384 with the first 248 outputs masked, trained for 20 epochs with AdamW ($10^{-3}$, weight decay $10^{-4}$) under seeds 7, 13, and 23; Gaussian NLL omits the additive $\frac12\log(2\pi)$ constant. We report mean, standard deviation, and paired seed-level differences.
-Three seeds quantify only training stochasticity, not participant uncertainty. For descriptive subject transfer, we summarize the fifteen leave-one-subject-out fold effects with a percentile-bootstrap $95\%$ interval over folds ($10{,}000$ resamples, fixed seed) on each subject's reduction macro-averaged over nine faults and both task splits; overlapping training sets and the non-increase identity preclude a population-level interpretation.
-Over ten scenarios, two splits, and several metrics an uncorrected test family would be uninterpretable and a corrected one underpowered at three seeds, so per-scenario entries and this fold interval are descriptive rather than confirmatory.
+Three seeds quantify training stochasticity, not participant uncertainty. For descriptive subject transfer, we summarize the fifteen leave-one-subject-out fold effects with a percentile-bootstrap $95\%$ interval over folds ($10{,}000$ resamples, fixed seed) on each subject's reduction macro-averaged over nine faults and both splits; overlapping training sets and the non-increase identity preclude a population-level reading.
+Over ten scenarios, two splits, and several metrics an uncorrected test family would be uninterpretable and a corrected one underpowered at three seeds, so per-scenario entries and this fold interval are descriptive, not confirmatory.
 
 \section{Results}
 
@@ -192,40 +206,42 @@ Unless stated otherwise, entries are means and standard deviations over seeds 7,
 
 \subsection{Moment Accuracy and Calibration}
 
-On uncorrupted trials (Table~\ref{tab:accuracy}), reliability training changes ID RMSE from $0.1616\pm0.0008$ to $0.1726\pm0.0017$ Nm/kg (paired difference $+0.0110\pm0.0024$) and the HT values from $0.2319\pm0.0050$ to $0.2531\pm0.0023$ ($+0.0213\pm0.0045$), at coverage ECEs of $0.033\pm0.017$ and $0.028\pm0.010$: it trades clean accuracy for fault robustness rather than improving both criteria.
+On uncorrupted trials (Table~\ref{tab:accuracy}), reliability training moves ID RMSE from $0.1616\pm0.0008$ to $0.1726\pm0.0017$ Nm/kg (paired difference $+0.0110\pm0.0024$) and HT from $0.2319\pm0.0050$ to $0.2531\pm0.0023$ ($+0.0213\pm0.0045$), at coverage ECEs of $0.033$ and $0.028$: it trades clean accuracy for fault robustness rather than improving both.
 
 \begin{table}[t]
 \centering
 \small
-\setlength{\tabcolsep}{1.2pt}
+% 1.2 pt 的列间距让 "Det. TCN" 和 RMSE 列几乎相连，读起来像一串。省掉小数点前的
+% 前导 0（表内数值都在 0--1，caption 已说明单位），腾出的宽度用来把列距放回 4 pt。
+\setlength{\tabcolsep}{4pt}
 \begin{tabular}{@{}lcccc@{}}
 \toprule
 Method & RMSE & $R^2$ & NLL & ECE\\
 \midrule
 \multicolumn{5}{l}{ID tasks}\\
-Det. TCN & $0.162(.001)$ & $0.798(.002)$ & -- & --\\
-Proposed & $0.173(.002)$ & $0.770(.005)$ & $-1.453(.034)$ & $0.033(.017)$\\
+Det. TCN & $.162(.001)$ & $.798(.002)$ & -- & --\\
+Proposed & $.173(.002)$ & $.770(.005)$ & $-1.453(.034)$ & $.033(.017)$\\
 \addlinespace[2pt]
 \multicolumn{5}{l}{Training-held-out (HT) tasks}\\
-Det. TCN & $0.232(.005)$ & $0.751(.011)$ & -- & --\\
-Proposed & $0.253(.002)$ & $0.704(.005)$ & $-1.063(.022)$ & $0.028(.010)$\\
+Det. TCN & $.232(.005)$ & $.751(.011)$ & -- & --\\
+Proposed & $.253(.002)$ & $.704(.005)$ & $-1.063(.022)$ & $.028(.010)$\\
 \bottomrule
 \end{tabular}
-\caption{Clean moment estimation and uncertainty diagnostics on unseen participants, mean (standard deviation) over three seeds. RMSE is in Nm/kg; lower is better except for $R^2$. NLL is constant-free and, with ECE, undefined for the deterministic TCN.}
+\caption{Clean moment estimation and uncertainty diagnostics on unseen participants, mean (standard deviation) over three seeds, with leading zeros omitted. RMSE is in Nm/kg; lower is better except for $R^2$. NLL is constant-free and, with ECE, undefined for the deterministic TCN.}
 \label{tab:accuracy}
 \end{table}
 
 \subsection{Fault Detection under Task Shift}
 
-Figure~\ref{fig:detection-taxonomy} reports all nine operators and all eight candidate channels. Across the six training-time faults, Detector-gate reaches macro-AUROC $0.815\pm0.006$ on ID and $0.740\pm0.002$ on HT tasks, against $0.849\pm0.005$ and $0.773\pm0.002$ for Detector-all; for the three held-out operators the pairs are $0.812\pm0.011$ and $0.715\pm0.002$ against $0.842\pm0.010$ and $0.778\pm0.004$.
-The gap is concentrated rather than uniform: validation selects $\{$reconstruction residual, staleness, coherence$\}$ for Detector-all and $\{$reconstruction residual, staleness$\}$ for Detector-gate, and losing coherence costs fixed sensor delay $0.878\to0.628$ on ID and $0.774\to0.557$ on HT tasks, with delay jitter behaving similarly ($0.867\to0.641$, $0.766\to0.559$).
-Coherence also reverses direction for held-out burst loss (AUROC $0.055$ ID, $0.054$ HT): its clean scores then sit above its faulty ones and max fusion inherits that raised baseline, so dropping it improves ID burst loss from $0.743$ to $0.886$. This exposes the high-score-is-anomalous assumption of max fusion rather than supporting an open-set claim.
-Averaged over all nine faults, staleness is the strongest single channel ($0.785$ ID, $0.796$ HT); coherence is the most extreme rather than the broadest, reaching $1.000$ for partial channel loss and a stuck IMU but $0.658$ and $0.663$ on average, while IMU bias stays the hardest fused case at $0.502$ and $0.504$, near chance and so barely distinguishable from valid motion with these sensors.
+Figure~\ref{fig:detection-taxonomy} reports all nine operators and eight candidate channels. Across the six training-time faults, Detector-gate reaches macro-AUROC $0.815\pm0.006$ on ID and $0.740\pm0.002$ on HT tasks, against $0.849\pm0.005$ and $0.773\pm0.002$ for Detector-all; for the three held-out operators the pairs are $0.812\pm0.011$ and $0.715\pm0.002$ against $0.842\pm0.010$ and $0.778\pm0.004$.
+The gap is concentrated, not uniform: validation selects $\{$reconstruction residual, staleness, coherence$\}$ for Detector-all and $\{$reconstruction residual, staleness$\}$ for Detector-gate, and losing coherence costs fixed sensor delay $0.878\to0.628$ on ID and $0.774\to0.557$ on HT tasks, with delay jitter similar ($0.867\to0.641$, $0.766\to0.559$).
+Coherence also reverses direction for held-out burst loss (AUROC $0.055$ ID, $0.054$ HT): its clean scores then sit above its faulty ones and max fusion inherits that raised baseline, so dropping it improves ID burst loss from $0.743$ to $0.886$, exposing the high-score-is-anomalous assumption of max fusion rather than supporting an open-set claim.
+Over all nine faults, staleness is the strongest single channel ($0.785$ ID, $0.796$ HT); coherence is the most extreme rather than the broadest, reaching $1.000$ for partial channel loss and a stuck IMU but $0.658$ and $0.663$ on average, while IMU bias stays the hardest fused case at $0.502$ and $0.504$, near chance.
 
 \begin{figure*}[t]
 \centering
-\includegraphics[width=0.9\textwidth]{figures/fig_detection_taxonomy.pdf}
-\caption{Fault-mechanism detectability across complementary signals. (a) Clean-versus-fault AUROC for all nine operators and all eight candidates, averaged over the two task splits for compact display; S/H mark training-seen/held-out operators, and ``All''/``Gate'' are validation-frozen evaluation subsets. The deployed timestep gate instead fuses every available member of $\mathcal{K}_{\mathrm{gate}}$, so detector AUROC is diagnostic rather than a measurement of that score; the supplement gives the split-specific $18\times10$ matrix. (b) Detector-gate macro AUROC, mean over three seeds; bars are cross-seed standard deviations.}
+\includegraphics[width=\textwidth]{figures/fig_detection_taxonomy.pdf}
+\caption{Fault-mechanism detectability. (a) Clean-versus-fault AUROC for all nine operators and eight candidates, task-split mean; S/H mark training-seen/held-out operators, ``All''/``Gate'' validation-frozen subsets. The gate fuses every member of $\mathcal{K}_{\mathrm{gate}}$, so detector AUROC is diagnostic. (b) Detector-gate macro AUROC by fault group; filled circles ID, open squares HT, bars cross-seed standard deviations over three seeds.}
 \label{fig:detection-taxonomy}
 \end{figure*}
 
@@ -233,56 +249,55 @@ Averaged over all nine faults, staleness is the strongest single channel ($0.785
 
 \begin{figure*}[t]
 \centering
-\includegraphics[width=0.9\textwidth]{figures/fig_safety_utility.pdf}
-\caption{Control consequences of the frozen gate, means over three seeds, with horizontal bars giving cross-seed standard deviations. (a) $X_{\mathrm{opp}}$ before and after gating; (b) aligned-command retention relative to the ungated estimator, dashed line at the validation floor; (c) mean absolute torque rate, labelled with relative increases. ``Held-op.'' denotes the three held-out corruption operators.}
+\includegraphics[width=\textwidth]{figures/fig_safety_utility.pdf}
+\caption{Control consequences of the frozen gate; means over three seeds, horizontal bars cross-seed standard deviations. (a) $X_{\mathrm{opp}}$ before and after gating, absolute changes labelled; (b) aligned-command retention relative to ungated, dashed line at the validation floor, filled triangles faults and open circles clean; (c) mean absolute torque rate with relative increases. ``Held-op.'' denotes the three held-out operators.}
 \label{fig:safety-utility}
 \end{figure*}
 
-Figure~\ref{fig:safety-utility} makes $X_{\mathrm{opp}}$, rather than the hard-shutdown-sensitive count $w$, the primary consequence view.
-On HT tasks $X_{\mathrm{opp}}$ falls from $0.0439\pm0.0062$ to $0.0298\pm0.0030$ $(\mathrm{Nm/kg})^2\mathrm{s}$ under training-time faults and from $0.0412\pm0.0066$ to $0.0270\pm0.0041$ for held-out operators, with peak wrong-direction torque dropping from $0.175\pm0.025$ to $0.137\pm0.017$ Nm/kg.
+Figure~\ref{fig:safety-utility} makes $X_{\mathrm{opp}}$, not the hard-shutdown-sensitive count $w$, the primary consequence view.
+On HT tasks $X_{\mathrm{opp}}$ falls from $0.0439\pm0.0062$ to $0.0298\pm0.0030$ $(\mathrm{Nm/kg})^2\mathrm{s}$ under training-time faults and from $0.0412\pm0.0066$ to $0.0270\pm0.0041$ for held-out operators, with peak wrong-direction torque dropping from $0.175$ to $0.137$ Nm/kg.
 The effect is smaller on ID faults ($0.0581\to0.0469$), negligible on clean ID trials ($0.0408\to0.0400$), and substantial on clean HT trials ($0.0316\to0.0236$): the gate also attenuates ordinary task-shift error.
-Subtracting the clean gate change within each seed and split before macro-averaging the nine matched scenarios, the fault-side change of $-0.0114\pm0.0020$ against a matched clean change of $-0.0044\pm0.0009$ leaves a clean-adjusted contrast of $-0.0070\pm0.0015$; for $w$ the three values are $-0.736\pm0.067$, $-0.397\pm0.043$, and $-0.339\pm0.098$ percentage points, so only about $46\%$ of the count reduction lies beyond the clean-condition effect.
+Subtracting the clean gate change within each seed and split before macro-averaging the nine matched scenarios, the fault-side change of $-0.0114\pm0.0020$ against a matched clean change of $-0.0044\pm0.0009$ leaves a clean-adjusted contrast of $-0.0070\pm0.0015$; for $w$ the three values are $-0.736$, $-0.397$, and $-0.339\pm0.098$ percentage points, so only about $46\%$ of the count reduction lies beyond the clean effect.
 
-The attenuation has two costs. Clean aligned-command retention is $0.960$ ID and $0.961$ on HT tasks but falls to $0.829$--$0.948$ under faults, and mean absolute torque rate rises from $0.237$ to $0.279$ Nm\,kg$^{-1}$\,s$^{-1}$ on HT seen faults and $0.249$ to $0.318$ for held-out operators ($18\%$ and $28\%$). Because $\dot u=g\dot u_0+u_0\dot g$, the second term can add discontinuities, so the archived point cannot support an online claim without rate limiting or hysteresis.
+The attenuation has two costs. Clean aligned-command retention is $0.960$ ID and $0.961$ HT but falls to $0.829$--$0.948$ under faults, and mean absolute torque rate rises from $0.237$ to $0.279$ Nm\,kg$^{-1}$\,s$^{-1}$ on HT seen faults and $0.249$ to $0.318$ for held-out operators ($18\%$ and $28\%$). Because $\dot u=g\dot u_0+u_0\dot g$, the second term can add discontinuities, so this point needs rate limiting or hysteresis before any online claim.
 
 \subsection{Reselection Audit and Matched Controls}
 
-The constrained rule searches $216$ validation candidates per seed, but its first execution used \texttt{stairs,ramp} as held-out tasks whereas the primary experiment uses \texttt{jump,cutting,lift\_weight,lunges}. Because this changes both ID and HT membership, that pass is excluded from comparable evidence; the corrected driver now reads split and window settings from each archived main report and rejects drift before evaluating test data.
-In a separate exploratory sweep around the archived Detector-gate subset, $36$ rate-limited settings beat the ungated command on fault-side $X_{\mathrm{opp}}$ at no torque-rate cost, the best reaching $0.0278$ versus $0.0620$ with torque rate $0.096$ versus $0.267$ but only $0.50$ clean aligned-command adequacy; hysteresis reaches $0.0083$ at $0.42$. Safety and smoothness are jointly attainable in that diagnostic sweep; surviving nominal command pays.
+Reselecting on validation data under the six clean constraints leaves $107$--$113$ of the $216$ candidates feasible and returns the same rate limits $(\lambda^{\downarrow},\lambda^{\uparrow})=(0.01,0.005)$ for all three seeds, with softness $0.5$, $1$, and $1$; validation fault-side $X_{\mathrm{opp}}$ falls by $21.9\%$--$31.4\%$ while clean retention stays at $0.951$--$0.965$ and clean torque rate drops to $0.926$--$0.945$ times ungated. Rate limiting therefore removes the smoothness cost rather than trading retention for it: at the selected point fault-side torque rate is $0.184$ against $0.301$ unsmoothed and $0.251$ ungated, at matched $X_{\mathrm{opp}}$ ($0.0375$ versus $0.0370$) and adequacy ($0.539$ versus $0.543$). Hysteresis is not usable: it saturates to full shutdown on every scenario including clean, so its $X_{\mathrm{opp}}$ of zero is the trivial no-assistance solution.
 
-The same exploratory subset is only weakly separated from randomized timing. Permuting its gate values is indistinguishable in $11$ of $120$ cells ($1000$ draws each), including cells where the permutation is marginally safer; this preserves the gate-value distribution but does not exactly match the aligned-command retention statistic. The strongest cell against a random \emph{shutdown} control reaches percentile $0.272$. Among leave-one-out six-channel gates only removing reconstruction measurably degrades fault-side $X_{\mathrm{opp}}$ ($0.0493$ versus $0.0479$); removing the fault logit is bit-identical, and fault supervision or staleness alone exactly reproduces the ungated command ($0.0565$), never firing here. An oracle error comparator reaches $0.0534$, \emph{worse} than the selected-subset gate, so oracle instantaneous error is no upper bound under a fixed mapping.
+With all six channels the gate reaches fault-side $X_{\mathrm{opp}}$ $0.0456$ on ID and $0.0289$ on HT tasks against $0.0565$ and $0.0431$ ungated, at least as safe as every leave-one-out variant and as the Detector-gate subset ($0.0460$, $0.0305$). Only removing reconstruction degrades it measurably ($0.0471$, $0.0311$); removing the fault logit is bit-identical, and fault supervision or staleness alone reproduces the ungated command exactly, never firing. An oracle instantaneous-error comparator is \emph{worse} ($0.0527$, $0.0372$), so it is no upper bound under a fixed mapping. Matched randomization is the weak point. Against a random \emph{shutdown} control matched on full-shutdown fraction the gate wins all $60$ cells, but against random attenuation matched exactly on aligned-command retention ($1000$ draws, within $10^{-5}$) it is indistinguishable in $32$ of $60$ cells and worse on encoder dropout and a frozen IMU. With retention fixed, the benefit is attributable to attenuation magnitude, not selective timing.
 
 \subsection{Transients, Paired Effects, and Reverse Ablation}
 
-Confining corruptions to sub-windows degrades the archived selected-subset gate sharply with duration. On ID tasks the miss rate is $0.945$, $0.933$, $0.898$, $0.814$, and $0.767$ at $25$, $50$, $100$, $250$, and $500$~ms and reaches $0.551$ for faults persisting to the window end; the corresponding HT range is $0.921$ to $0.769$, reaching $0.553$ when persistent. Among windows that cross $g<0.5$, onset delays span $5.2$--$612$~ms on ID and $3.1$--$583$~ms on HT tasks. False shutdowns are $18.9$ per minute on ID and $46$--$47$ on HT conditions, matching clean pseudo-onset controls at $18.9$ and $46.2$, so the false-alarm rate belongs to the operating point and task shift, not the injected faults.
+Sub-window corruptions defeat the rate-limited point almost completely: ID miss rates are $0.983$, $0.982$, $0.979$, $0.966$, and $0.910$ at $25$--$500$~ms, improving only to $0.822$ when the fault persists to the window end ($0.971$ to $0.902$, then $0.784$, on HT tasks). The rate limit is the cause. Among windows that do cross $g<0.5$ the onset delay tracks the injected duration itself ($1.1$ to $254.6$~ms on ID tasks), so a short transient ends before the gain can descend. The same limit keeps the point quiet---false shutdowns are $0.44$--$0.71$ per minute on ID and $1.53$--$1.98$ on HT faults, against clean pseudo-onset controls at $0.478$ and $1.566$, so residual alarms belong to the operating point and task shift, not the faults. Steady-state safety and transient responsiveness thus conflict under one rate limit.
 
-For the same exploratory subset, same-window paired double differences give a negative $X_{\mathrm{opp}}$ point estimate in $52$ of $54$ cells over $13{,}041$ exactly matched pairs, none dropped, but two held-out participants make the participant-level bootstrap degenerate, so all $216$ cells are underpowered: pairing removes within-participant variance, not between-participant degrees of freedom.
-Five of eight reverse-ablation cells lie on the reported $(X_{\mathrm{opp}}$, clean aligned-command adequacy) front. However, two nominally full-stack rows were evaluated under different gate definitions or corruption draws and differ slightly ($0.0486$ versus $0.0487$), so the current table cannot establish that the full stack is dominated. Among trained variants, dropping forecasting has the largest $X_{\mathrm{opp}}$ value ($0.0810$), the deterministic variant the lowest clean adequacy ($0.708$), and removing reconstruction is mildest; these comparisons remain descriptive until every cell is reevaluated on one frozen corruption realization and gate policy.
+Same-window paired double differences give a negative $X_{\mathrm{opp}}$ estimate in $48$ of $54$ cells and an interval excluding zero in $49$, over $13{,}041$ matched pairs with none dropped, and $73$ of $90$ across-seed contrasts are sign-consistent. But two held-out participants make the participant-level bootstrap degenerate, so all $270$ cells are underpowered: pairing removes within-participant variance, not between-participant degrees of freedom.
+The reverse ablation evaluates seven cells under one split, one $216$-candidate gate protocol, and one corruption realization against a single full-stack reference, removing the duplicate-reference and mixed-protocol confounds. Four cells lie on the $(X_{\mathrm{opp}}$, clean retention) front: no forecasting ($0.0440$ at $0.968$), the six-channel stack ($0.0456$ at $0.968$), no staleness ($0.0458$ at $0.972$), and the validation-selected subset ($0.0460$ at $0.986$). The three dominated cells order stably in every seed: no fault supervision ($0.0503$), no reconstruction ($0.0505$), and the deterministic variant ($0.0553$). The front is unresolvable: its values span $0.0020$ against a $0.0043$ gap to the nearest dominated cell, and the forecast-free cell ranks fourth, third, then first across seeds, so necessity holds only against the dominated cells.
 
 \subsection{Ablations and Stress Tests}
 
-Adding fault augmentation, probabilistic regression, reconstruction, and forecasting in a fixed non-factorial order under a fixed split and budget changes Detector-all AUROC by $+0.042\pm0.036$, $-0.083\pm0.003$, $+0.024\pm0.004$, and $-0.001\pm0.008$: the simpler stage-2 detector ranks highest, and reconstruction is only the first stage whose selected score activates the gate, so these entries diagnose the sequence rather than identify a Pareto-optimal architecture.
-At maximum packet loss, Detector-all and Detector-gate reach $0.961$ ID and $0.914$ HT AUROC; at the longest delay they diverge to $0.899/0.743$ and $0.788/0.588$ because only the diagnostic coherence channel responds strongly. Across 15 leave-one-subject-out folds the mechanically non-increasing wrong-direction reduction averages $0.44$ percentage points (descriptive bootstrap $95\%$ interval $[0.23,0.67]$), and clean retention averages $0.961$ with minimum $0.880$; the supplement reports full stress, ablation, and fold-level results.
+Adding fault augmentation, probabilistic regression, reconstruction, and forecasting in a fixed non-factorial order under a fixed split and budget changes Detector-all AUROC by $+0.042\pm0.036$, $-0.083\pm0.003$, $+0.024\pm0.004$, and $-0.001\pm0.008$: the simpler stage-2 detector ranks highest, and reconstruction is the first stage whose selected score activates the gate, so these entries diagnose the sequence rather than identify an optimal architecture.
+At maximum packet loss, Detector-all and Detector-gate reach $0.961$ ID and $0.914$ HT AUROC; at the longest delay they diverge to $0.899/0.743$ and $0.788/0.588$ because only the diagnostic coherence channel responds strongly. Across 15 leave-one-subject-out folds the non-increasing wrong-direction reduction averages $0.44$ percentage points (descriptive $95\%$ interval $[0.23,0.67]$), and clean retention averages $0.961$ with minimum $0.880$; the supplement reports fold-level results.
 
 \section{Discussion}
-Reliability estimates matter only if they change the command, not merely report confidence. The validation-selected gate yields a clean-adjusted $X_{\mathrm{opp}}$ reduction of $0.0070$ $(\mathrm{Nm/kg})^2\mathrm{s}$ while retaining $96.1\%$ of the clean baseline's aligned command: a modest offline effect at one operating point.
-The wrong-direction count captures only exact shutdowns, and the torque-rate increase exposes a trade-off that AUROC or retention alone would hide; a correctly split reselection is required to determine whether non-vacuous constraints convert it into an acceptable adequacy cost. The exploratory timing controls are cautionary---gate-value permutation sometimes matches the selected-subset gate and an oracle error comparator does worse---but they do not yet isolate the timing value of the declared six-channel, reselected gate.
+Reliability estimates matter only if they change the command, not merely report confidence. The validation-selected gate yields a clean-adjusted $X_{\mathrm{opp}}$ reduction of $0.0070$ $(\mathrm{Nm/kg})^2\mathrm{s}$ while keeping $96.1\%$ of the clean aligned command: a modest offline effect at one operating point.
+The wrong-direction count captures only exact shutdowns, and the torque-rate increase exposes a trade-off AUROC or retention alone would hide; constrained reselection resolves it, returning one rate-limited point across seeds that is smoother than ungated at equal $X_{\mathrm{opp}}$ and adequacy. The matched controls are more sobering: with retention fixed to within $10^{-5}$, random attenuation matches the six-channel gate in over half the cells, so the effect is one of attenuation magnitude rather than selective timing, and an oracle error comparator performing worse confirms that instantaneous error is not what a fixed mapping should chase.
 
-Fault mechanisms violate different signal properties---reconstruction for a missing insole on ID tasks, staleness for packet loss and the insole under task shift, coherence for partial channel loss and delay---yet in the exploratory gate comparison only removing reconstruction changes $X_{\mathrm{opp}}$ materially. Mechanism diversity in the \emph{detector} therefore has not yet transferred convincingly to the \emph{actuator}. Clean RMSE is also worse than the split-matched deterministic TCN, so predictive uncertainty and auxiliary training are not universal solutions. The layer complements approaches that expand behavioral coverage \citep{molinaro2024task} or reduce training-data demands \citep{scherpereel2025domain}, but score references and the operating point must be re-estimated in each target sensor domain.
+Fault mechanisms violate different signal properties---reconstruction for a missing insole on ID tasks, staleness for packet loss and the insole under task shift, coherence for partial channel loss and delay---yet only removing reconstruction changes $X_{\mathrm{opp}}$ materially, so mechanism diversity in the \emph{detector} has not yet transferred to the \emph{actuator}. With clean RMSE also worse than the deterministic TCN, predictive uncertainty and auxiliary training are not universal solutions. The layer complements approaches that expand behavioral coverage \citep{molinaro2024task} or reduce data demands \citep{scherpereel2025domain}, but score references and the operating point need re-estimation per sensor domain.
 
 \section{Limitations}
-The score responds to prediction error in general, and the cohort is the ceiling: pairing supplies the window-level contrast, but two held-out participants make the participant-level bootstrap degenerate, so every paired interval describes this cohort's dispersion, not a population effect. The LOSO bootstrap likewise treats held-out participants as resampling units despite overlapping training sets.
-The corrected gate policy and audit protocol were designed after inspecting archived test diagnostics. Although the implemented selector itself uses validation data only, reevaluating the same test participants is post-hoc and is not equivalent to confirmation on a fresh cohort.
-The matched controls do not yet support a fusion claim: they use the archived Detector-gate subset rather than the declared six-channel reselected gate, and their permutation preserves gate values rather than exactly matching weighted retention. Two command-time channels never fire in that audit and the oracle error comparator is worse, suggesting that attenuation magnitude and reconstruction dominate, but the final all-channel comparison must be rerun. Reported Detector-gate AUROC likewise uses a selected subset while the actuation gate fuses all available channels.
-The first reselected point used the wrong held-task set and is not comparable to the primary split. The reverse-ablation table also mixes nominally duplicate full-stack evaluations with different corruption draws, so it cannot support a dominance claim; the ordered ablation is non-factorial and the stage-2 detector still has higher AUROC.
-Sub-window transients bound detection further: $77$--$95\%$ of 25--500~ms ID faults and $77$--$92\%$ on HT tasks are missed by the archived selected-subset point; false shutdowns persist in both clean pseudo-onset controls and rise from $18.9$ to $46.2$ per minute under task shift. Only two simultaneous synthetic fault pairs were tested, the three held-out operators stay within known packet-loss and delay families, and synthetic replay cannot represent hardware failures.
-We did not run the gate online; fixed-kinematics replay supports relative command comparisons, not interaction safety, adaptation, or metabolic benefit, and rate limiting removes the offline torque-rate increase only by trading retention, neither trade-off validated on hardware. Labels and sensing come from one platform, we do not jointly train the domain adaptation of \citet{scherpereel2025domain}, and independent low-level torque and hardware limits remain necessary.
+The score responds to prediction error in general, and the cohort is the ceiling: pairing supplies the window-level contrast, but two held-out participants make the participant-level bootstrap degenerate, so every paired interval describes this cohort's dispersion, not a population effect. The LOSO bootstrap likewise treats held-out participants as resampling units despite overlapping training sets. The gate policy and audit protocol were designed after inspecting archived test diagnostics; although the selector uses validation data only, reevaluating the same test participants is post-hoc, not confirmation on a fresh cohort.
+The matched controls do not support a timing claim. Under exact retention matching, random attenuation is indistinguishable from the six-channel gate in $32$ of $60$ cells and safer on two fault types, and two channels never fire, so the gain is one of magnitude and of the reconstruction channel rather than of fusion or of when the gate acts. Reported Detector-gate AUROC uses a selected subset while the actuation gate fuses all channels, the ordered ablation is non-factorial, and the stage-2 detector still has higher AUROC.
+Sub-window transients bound the result harder: at the selected point $91$--$98\%$ of 25--500~ms ID faults and $90$--$97\%$ on HT tasks are missed, and even persistent faults are missed in $78$--$82\%$ of windows, so steady-state safety and transient responsiveness cannot both come from one rate limit. False shutdowns persist in the clean pseudo-onset controls, rising from $0.478$ to $1.566$ per minute under task shift. Only two fault pairs were tested, the three held-out operators stay within known packet-loss and delay families, and synthetic replay cannot represent hardware failures.
+We did not run the gate online; fixed-kinematics replay supports relative command comparisons, not interaction safety, adaptation, or metabolic benefit, and the offline finding that rate limiting removes the torque-rate increase at no retention cost is unvalidated on hardware. Labels and sensing come from one platform, we do not jointly train the domain adaptation of \citet{scherpereel2025domain}, and low-level torque limits remain necessary.
 
 \section{Conclusion}
-We connected heterogeneous anomaly evidence to offline command consequences and implemented the controls such a claim requires: constrained reselection, randomized and oracle comparators, a rate-limit and hysteresis grid, sub-window transients, paired contrasts, and leave-one-component-out ablation. Their first pass exposes split, policy, and matching choices that must be unified before they support the declared six-channel gate, so we report a reproducible audit protocol rather than an optimal architecture or safety claim; split-consistent exact-retention all-channel reevaluation and online human-subject validation remain the next steps.
+We connected heterogeneous anomaly evidence to offline command consequences and ran the controls such a claim requires. Under one split-locked six-channel point per seed, gating attenuates opposing command at modest clean cost and rate limiting makes it smoother than ungated for free, but retention-matched randomization shows a magnitude effect rather than selective timing, and sub-window faults are mostly missed. This supports a reproducible offline audit, not an optimal architecture or a safety claim.
 
 \section{Ethical Statement}
-Reliability-aware assistance may reduce risk from silent sensing failures, but overconfident claims could encourage premature deployment around human users, so we separate offline replay from human-subject evidence, report negative and weak detector results, and do not present the gate as a safety guarantee. We use participant data under the source dataset's consent terms.
+Reliability-aware assistance may reduce risk from silent sensing failures, but overconfident claims could encourage premature deployment, so we separate offline replay from human-subject evidence and make no safety guarantee. Data is used under source terms.
+% 上面这段必须收在第 7 页内：References 要从第 8 页首行起。改动时先跑
+% pdftotext -f 8 -l 8 main.pdf - | grep -n References，必须是 1:References。
 
 
 \bibliography{references}

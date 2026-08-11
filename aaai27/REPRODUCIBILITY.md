@@ -13,11 +13,11 @@ primary uncertainty statement is instead the percentile-bootstrap 95% interval
 over 15 leave-one-subject-out folds.
 
 The completed server run records an NVIDIA A100 80GB PCIe GPU (driver
-570.211.01), 503 GB host memory, Ubuntu 22.04.5 (Linux 6.2.1), Python 3.12, and
-PyTorch 2.11.0 with CUDA 12.8. The official checklist therefore marks the
-computing-infrastructure item as `partial`: the CPU model and a complete
-machine-readable package lock were not captured. The listed values describe
-the final server suite, not every historical exploratory run.
+570.211.01), a dual-socket AMD EPYC 7T83 64-core host (256 threads), 503 GB host
+memory, Ubuntu 22.04.5 LTS (Linux 6.2.1), Python 3.12.13, and PyTorch 2.11.0
+built against CUDA 12.8. The supplement states these in full, so the official
+checklist marks the computing-infrastructure item `yes`. The listed values
+describe the final server suite, not every historical exploratory run.
 
 ## Expected data layout
 
