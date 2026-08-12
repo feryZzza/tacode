@@ -2,3 +2,4 @@ torch>=2.0
 pandas>=2.0
 numpy>=1.24
 matplotlib>=3.7
+mat-io>=1.0.0

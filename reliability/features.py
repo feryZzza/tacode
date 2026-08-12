@@ -4,9 +4,25 @@ from __future__ import annotations
 
 from typing import Iterable, List
 
-from configs.default_config import input_names as nature_human_inputs
-from configs.default_config import label_names as nature_label_names
-from configs.default_config import participant_masses
+from openexo.adapters import NATURE_MASSES_KG
+
+
+# Kept here because the archived reliability pipeline still consumes the full
+# Nature controller schema.  The removed configs/ package duplicated these
+# values solely for the obsolete single-dataset demo.
+nature_human_inputs = [
+	"foot_imu_*_gyro_x", "foot_imu_*_gyro_y", "foot_imu_*_gyro_z",
+	"foot_imu_*_accel_x", "foot_imu_*_accel_y", "foot_imu_*_accel_z",
+	"shank_imu_*_gyro_x", "shank_imu_*_gyro_y", "shank_imu_*_gyro_z",
+	"shank_imu_*_accel_x", "shank_imu_*_accel_y", "shank_imu_*_accel_z",
+	"thigh_imu_*_gyro_x", "thigh_imu_*_gyro_y", "thigh_imu_*_gyro_z",
+	"thigh_imu_*_accel_x", "thigh_imu_*_accel_y", "thigh_imu_*_accel_z",
+	"insole_*_cop_x", "insole_*_cop_z", "insole_*_force_y",
+	"hip_angle_*", "hip_angle_*_velocity_filt",
+	"knee_angle_*", "knee_angle_*_velocity_filt",
+]
+nature_label_names = ["hip_flexion_*_moment", "knee_angle_*_moment"]
+participant_masses = dict(NATURE_MASSES_KG)
 
 
 ACTION_FEATURE_GROUPS = {

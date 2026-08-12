@@ -6,8 +6,10 @@ paper:
 > Reliability-aware biological joint moment estimation for risk-sensitive
 > task-agnostic exoskeleton assistance.
 
-The code is intentionally separate from the original Nature 2024 reproduction
-files (`example.py`, `tcn.py`, `dataloader.py`) so the baseline remains intact.
+The code is an archived pipeline for the previous paper.  Its reusable original
+TCN implementation (`tcn.py`) and released checkpoints remain intact, while the
+obsolete single-dataset demo/config loader has been replaced by
+`train_open_data.py`.
 
 ## 中文速览
 
